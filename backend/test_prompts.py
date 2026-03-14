@@ -72,9 +72,9 @@ for i, extraction in enumerate(extraction_results):
         max_tokens=1500,
         messages=[{"role": "user", "content": f"{SOAP_PROMPT}\n\n{json.dumps(extraction)}"}]
     )
-    soap_note = response.content[0].text[:300]
+    soap_note = response.content[0].text
     soap_results.append(soap_note)
-    print(soap_note)
+    print(soap_note[:300])
 
 print("\n" + "=" * 50 + "\n")
 print("AUDIT TESTS")

@@ -1,5 +1,6 @@
 import { Mic, MicOff, Play, Loader2, RotateCcw, Timer } from 'lucide-react';
 import type { SessionStatus } from '../types';
+import { supabase } from '../supabase';
 
 interface ControlBarProps {
   status: SessionStatus;
@@ -185,18 +186,29 @@ export default function ControlBar({
             className="ml-2 pl-3 flex items-center gap-1.5"
             style={{ borderLeft: '1px solid rgba(255,255,255,0.07)' }}
           >
-            <span
-              className="text-[10px] font-bold px-2 py-1 rounded-full"
-              style={{ background: 'rgba(29,78,216,0.18)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.3)' }}
+            <button
+            onClick={() => supabase.auth.signOut()}
+            className="text-[10px] font-bold px-2 py-1 rounded-full transition-all duration-150"
+            style={{
+                background: 'rgba(255,255,255,0.04)',
+                color: '#2E4A66',
+                border: '1px solid rgba(255,255,255,0.07)',
+                cursor: 'pointer',
+                fontFamily: 'Sora, sans-serif',
+            }}
+            onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(239,68,68,0.08)';
+                e.currentTarget.style.color = '#FCA5A5';
+                e.currentTarget.style.borderColor = 'rgba(239,68,68,0.2)';
+            }}
+            onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.color = '#2E4A66';
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)';
+            }}
             >
-              Sun Life
-            </span>
-            <span
-              className="text-[10px] font-bold px-2 py-1 rounded-full"
-              style={{ background: 'rgba(255,255,255,0.04)', color: '#2E4A66', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              IBM
-            </span>
+            Sign Out
+            </button>
           </div>
         </div>
       </div>

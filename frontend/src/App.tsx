@@ -8,6 +8,8 @@ import AuditPanel from './components/AuditPanel';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useSessionTimer } from './hooks/useSessionTimer';
 import type { SessionStatus, TranscriptLine, SOAPNote, AuditResult } from './types';
+import { supabase } from './supabase';
+
 
 const API = import.meta.env.VITE_API_URL || '/api';
 
@@ -288,12 +290,18 @@ export default function App() {
     setStatus('processing');
     const fullText = lines.map((l) => `${l.speaker}: ${l.text}`).join('\n');
 
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+
     try {
-      const res = await fetch(`${API}/generate-note`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: fullText }),
-      });
+        const res = await fetch(`${API}/generate-note`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({ transcript: fullText }),
+        });
 
       if (!res.ok) throw new Error(`Note generation failed: ${res.statusText}`);
       const soapNote: SOAPNote = await res.json();
@@ -309,7 +317,10 @@ export default function App() {
 
       fetch(`${API}/audit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({ soap_note: noteText }),
       })
         .then(async (r) => {
@@ -407,6 +418,8 @@ export default function App() {
 
   const endSession = useCallback(async () => {
     timer.stop();
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
 
     if (isRecording) {
       const blob = await stopRecording();
@@ -435,7 +448,10 @@ export default function App() {
             const b64 = await blobToBase64(blob);
             const res = await fetch(`${API}/transcribe`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
               body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
             });
 

@@ -7,6 +7,8 @@ import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useSessionTimer } from './hooks/useSessionTimer';
 import type { SessionStatus, TranscriptLine, SOAPNote, AuditResult } from './types';
 
+const API = import.meta.env.VITE_API_URL || '/api';
+
 // Synthetic demo consultation transcript
 const DEMO_TRANSCRIPT_LINES: Omit<TranscriptLine, 'id'>[] = [
   { speaker: 'Doctor',  text: "Good morning, Mr. Thompson. What brings you in today?", timestamp: 0 },
@@ -60,7 +62,7 @@ export default function App() {
       .join('\n');
 
     try {
-      const res = await fetch('/api/generate-note', {
+      const res = await fetch(`${API}/generate-note`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript: fullText }),
@@ -78,7 +80,7 @@ export default function App() {
         .map((t, i) => `${sections[i]}\n${t}`)
         .join('\n\n');
 
-      fetch('/api/audit', {
+      fetch(`${API}/audit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ soap_note: noteText }),
@@ -151,7 +153,7 @@ export default function App() {
         setStatus('processing');
         try {
           const b64 = await blobToBase64(blob);
-          const res = await fetch('/api/transcribe', {
+          const res = await fetch(`${API}/transcribe`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
@@ -197,7 +199,7 @@ export default function App() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 font-sans">
+    <div className="flex flex-col h-screen" style={{ background: '#F0F2F7', fontFamily: 'Sora, sans-serif' }}>
       <ControlBar
         status={status}
         timerFormatted={timer.formatted}
@@ -209,15 +211,16 @@ export default function App() {
 
       {/* Error banner */}
       {error && (
-        <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700">
-          Error: {error}
+        <div className="px-5 py-2 text-xs font-semibold flex items-center gap-2" style={{ background: '#FEF2F2', borderBottom: '1px solid #FECACA', color: '#B91C1C' }}>
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+          {error}
         </div>
       )}
 
       {/* Main panels */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden gap-px" style={{ background: '#E2E6EF', padding: '0' }}>
         {/* Left: Transcript */}
-        <div className="w-[45%] flex flex-col overflow-hidden">
+        <div className="w-[44%] flex flex-col overflow-hidden">
           <TranscriptPanel lines={transcript} status={status} />
         </div>
 

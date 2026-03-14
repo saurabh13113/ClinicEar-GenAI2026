@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,10 +8,11 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-family: 'Sora', sans-serif;
   }
 
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-[#F0F2F7] text-gray-900;
   }
 
   * {
@@ -17,8 +20,8 @@
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
   }
 
   ::-webkit-scrollbar-track {
@@ -26,10 +29,89 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 rounded-full;
+    background: #d1d5db;
+    border-radius: 99px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-400;
+    background: #9ca3af;
   }
+}
+
+/* ── Transcript line entrance ── */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.transcript-enter {
+  animation: slideUp 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Recording pulse ring ── */
+@keyframes pulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.recording-ring {
+  animation: pulseRing 1.4s ease-out infinite;
+}
+
+/* ── Processing shimmer ── */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, #f0f2f7 25%, #e4e7ef 50%, #f0f2f7 75%);
+  background-size: 400px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* ── Score bar fill ── */
+@keyframes fillBar {
+  from { width: 0%; }
+}
+
+.score-bar-fill {
+  animation: fillBar 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.2s;
+}
+
+/* ── Note section entrance ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.note-section {
+  animation: fadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.note-section:nth-child(1) { animation-delay: 0.05s; }
+.note-section:nth-child(2) { animation-delay: 0.12s; }
+.note-section:nth-child(3) { animation-delay: 0.19s; }
+.note-section:nth-child(4) { animation-delay: 0.26s; }
+.note-section:nth-child(5) { animation-delay: 0.33s; }
+
+/* ── Clinical document body text ── */
+.clinical-text {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: #1e293b;
+}
+
+/* ── Mono code chips ── */
+.mono-chip {
+  font-family: 'JetBrains Mono', monospace;
 }

@@ -50,6 +50,27 @@ function normalizeTranscriptText(text: string) {
     .replace(/\s+/g, ' ');
 }
 
+function normalizeAuditResult(payload: unknown): AuditResult | null {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const data = payload as Record<string, unknown>;
+  const quality = Number(data.quality_score);
+  const completeness = Number(data.completeness_score);
+
+  if (!Number.isFinite(quality) || !Number.isFinite(completeness)) {
+    return null;
+  }
+
+  return {
+    quality_score: Math.max(0, Math.min(100, Math.round(quality))),
+    completeness_score: Math.max(0, Math.min(100, Math.round(completeness))),
+    flagged_terms: Array.isArray(data.flagged_terms)
+      ? data.flagged_terms.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+      : [],
+    consistency_notes: typeof data.consistency_notes === 'string' ? data.consistency_notes : '',
+  };
+}
+
 function getRealtimeWsUrl() {
   const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
 
@@ -291,9 +312,25 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ soap_note: noteText }),
       })
-        .then((r) => r.json())
-        .then((a: AuditResult) => setAudit(a))
-        .catch(console.error)
+        .then(async (r) => {
+          const payload = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            const detail = typeof payload?.detail === 'string' ? payload.detail : `status ${r.status}`;
+            throw new Error(`Audit failed (${detail})`);
+          }
+
+          const normalized = normalizeAuditResult(payload);
+          if (!normalized) {
+            throw new Error('Audit returned invalid payload');
+          }
+
+          setAudit(normalized);
+        })
+        .catch((err) => {
+          console.error(err);
+          setError(err instanceof Error ? err.message : 'Audit failed');
+          setAudit(null);
+        })
         .finally(() => setAuditLoading(false));
 
     } catch (err) {

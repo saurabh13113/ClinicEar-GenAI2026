@@ -21,7 +21,11 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 app = FastAPI(title="ClinicalEar API")
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:3000").split(",")
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:5174,http://localhost:3000,"
+    "https://frontend-delta-ochre-79.vercel.app",
+).split(",")
 
 app.add_middleware(
     CORSMiddleware,

@@ -42,6 +42,35 @@ function blobToBase64(blob: Blob): Promise<string> {
 
 type RightTab = 'soap' | 'patient';
 
+function normalizeTranscriptText(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeAuditResult(payload: unknown): AuditResult | null {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const data = payload as Record<string, unknown>;
+  const quality = Number(data.quality_score);
+  const completeness = Number(data.completeness_score);
+
+  if (!Number.isFinite(quality) || !Number.isFinite(completeness)) {
+    return null;
+  }
+
+  return {
+    quality_score: Math.max(0, Math.min(100, Math.round(quality))),
+    completeness_score: Math.max(0, Math.min(100, Math.round(completeness))),
+    flagged_terms: Array.isArray(data.flagged_terms)
+      ? data.flagged_terms.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+      : [],
+    consistency_notes: typeof data.consistency_notes === 'string' ? data.consistency_notes : '',
+  };
+}
+
 function getRealtimeWsUrl() {
   const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
 
@@ -66,10 +95,10 @@ export default function App() {
 
   const demoIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const realtimeWsRef = useRef<WebSocket | null>(null);
-  const speakerTurnRef = useRef<'Doctor' | 'Patient'>('Doctor');
   const partialLineIdRef = useRef<string | null>(null);
   const recordingStartMsRef = useRef<number>(0);
   const transcriptRef = useRef<TranscriptLine[]>([]);
+  const lastCommittedRef = useRef<{ text: string; atMs: number } | null>(null);
 
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const timer = useSessionTimer();
@@ -93,16 +122,56 @@ export default function App() {
     setTranscript((prev) => [...prev, { ...line, id: `${Date.now()}-${Math.random()}` }]);
   }, []);
 
+  const getNextSpeaker = useCallback((lines: TranscriptLine[]): 'Doctor' | 'Patient' => {
+    const lastFinal = [...lines].reverse().find((line) => !line.id.startsWith('partial-'));
+    if (!lastFinal) return 'Doctor';
+    return lastFinal.speaker === 'Doctor' ? 'Patient' : 'Doctor';
+  }, []);
+
   const upsertPartialLine = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-
-    const speaker = speakerTurnRef.current;
+    const normalizedIncoming = normalizeTranscriptText(trimmed);
+    if (!normalizedIncoming) return;
 
     setTranscript((prev) => {
+      const lastFinalLine = [...prev].reverse().find((line) => !line.id.startsWith('partial-'));
+      if (lastFinalLine) {
+        const normalizedLastFinal = normalizeTranscriptText(lastFinalLine.text);
+        if (
+          normalizedIncoming === normalizedLastFinal ||
+          normalizedIncoming.startsWith(normalizedLastFinal) ||
+          normalizedLastFinal.startsWith(normalizedIncoming)
+        ) {
+          return prev;
+        }
+      }
+
+      const lastCommitted = lastCommittedRef.current;
+      if (lastCommitted) {
+        const normalizedLastCommitted = normalizeTranscriptText(lastCommitted.text);
+        const isNearInTime = Date.now() - lastCommitted.atMs < 8000;
+        if (
+          isNearInTime && (
+            normalizedIncoming === normalizedLastCommitted ||
+            normalizedIncoming.startsWith(normalizedLastCommitted) ||
+            normalizedLastCommitted.startsWith(normalizedIncoming)
+          )
+        ) {
+          return prev;
+        }
+      }
+
       const existingId = partialLineIdRef.current;
+      const existingPartial = existingId ? prev.find((line) => line.id === existingId) : undefined;
+
+      const stableLines = prev.filter((line) => !line.id.startsWith('partial-'));
       const partialId = existingId || `partial-${Date.now()}-${Math.random()}`;
       partialLineIdRef.current = partialId;
+
+      const speaker = existingPartial?.speaker === 'Doctor' || existingPartial?.speaker === 'Patient'
+        ? existingPartial.speaker
+        : getNextSpeaker(stableLines);
 
       const partialLine: TranscriptLine = {
         id: partialId,
@@ -111,27 +180,51 @@ export default function App() {
         timestamp: Date.now() - recordingStartMsRef.current,
       };
 
-      const idx = prev.findIndex((line) => line.id === partialId);
-      if (idx === -1) return [...prev, partialLine];
-
-      const next = [...prev];
-      next[idx] = partialLine;
-      return next;
+      return [...stableLines, partialLine];
     });
-  }, []);
+  }, [getNextSpeaker]);
 
   const commitLiveLine = useCallback((text: string, timestampMs?: number) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    const normalizedIncoming = normalizeTranscriptText(trimmed);
+    if (!normalizedIncoming) return;
+    const now = Date.now();
+    const lastCommitted = lastCommittedRef.current;
 
-    const speaker = speakerTurnRef.current;
+    if (lastCommitted && lastCommitted.text === normalizedIncoming && now - lastCommitted.atMs < 4000) {
+      setTranscript((prev) => {
+        const withoutPartial = prev.filter((line) => !line.id.startsWith('partial-'));
+        partialLineIdRef.current = null;
+        return withoutPartial;
+      });
+      return;
+    }
+
+    let didAppend = false;
 
     setTranscript((prev) => {
-      const withoutPartial = partialLineIdRef.current
-        ? prev.filter((line) => line.id !== partialLineIdRef.current)
-        : prev;
+      const existingPartial = partialLineIdRef.current
+        ? prev.find((line) => line.id === partialLineIdRef.current)
+        : undefined;
+
+      const withoutPartial = prev.filter((line) => !line.id.startsWith('partial-'));
+
+      const speaker = existingPartial?.speaker === 'Doctor' || existingPartial?.speaker === 'Patient'
+        ? existingPartial.speaker
+        : getNextSpeaker(withoutPartial);
+
+      const lastFinalLine = [...withoutPartial].reverse().find((line) => !line.id.startsWith('partial-'));
+      if (lastFinalLine) {
+        const normalizedLast = normalizeTranscriptText(lastFinalLine.text);
+        if (normalizedLast === normalizedIncoming) {
+          partialLineIdRef.current = null;
+          return withoutPartial;
+        }
+      }
 
       partialLineIdRef.current = null;
+      didAppend = true;
 
       return [
         ...withoutPartial,
@@ -144,8 +237,10 @@ export default function App() {
       ];
     });
 
-    speakerTurnRef.current = speaker === 'Doctor' ? 'Patient' : 'Doctor';
-  }, []);
+    if (didAppend) {
+      lastCommittedRef.current = { text: normalizedIncoming, atMs: now };
+    }
+  }, [getNextSpeaker]);
 
   const connectRealtimeTranscriptSocket = useCallback(async () => {
     if (realtimeWsRef.current) {
@@ -217,9 +312,25 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ soap_note: noteText }),
       })
-        .then((r) => r.json())
-        .then((a: AuditResult) => setAudit(a))
-        .catch(console.error)
+        .then(async (r) => {
+          const payload = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            const detail = typeof payload?.detail === 'string' ? payload.detail : `status ${r.status}`;
+            throw new Error(`Audit failed (${detail})`);
+          }
+
+          const normalized = normalizeAuditResult(payload);
+          if (!normalized) {
+            throw new Error('Audit returned invalid payload');
+          }
+
+          setAudit(normalized);
+        })
+        .catch((err) => {
+          console.error(err);
+          setError(err instanceof Error ? err.message : 'Audit failed');
+          setAudit(null);
+        })
         .finally(() => setAuditLoading(false));
 
     } catch (err) {
@@ -274,7 +385,7 @@ export default function App() {
     setRightTab('soap');
 
     partialLineIdRef.current = null;
-    speakerTurnRef.current = 'Doctor';
+    lastCommittedRef.current = null;
     recordingStartMsRef.current = Date.now();
 
     await connectRealtimeTranscriptSocket();
@@ -361,7 +472,7 @@ export default function App() {
       realtimeWsRef.current = null;
     }
     partialLineIdRef.current = null;
-    speakerTurnRef.current = 'Doctor';
+    lastCommittedRef.current = null;
     setStatus('idle');
     setTranscript([]);
     setNote(null);

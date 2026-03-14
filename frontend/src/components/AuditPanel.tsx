@@ -40,6 +40,8 @@ function ScoreGauge({ score, label }: { score: number; label: string }) {
 }
 
 export default function AuditPanel({ audit, isLoading }: AuditPanelProps) {
+  const flaggedTerms = Array.isArray(audit?.flagged_terms) ? audit.flagged_terms : [];
+
   return (
     <div className="shrink-0" style={{ background: '#07101E', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
       {/* Header */}
@@ -83,12 +85,12 @@ export default function AuditPanel({ audit, isLoading }: AuditPanelProps) {
 
             {/* Details */}
             <div className="flex-1 min-w-0 space-y-2">
-              {audit.flagged_terms.length > 0 ? (
+              {flaggedTerms.length > 0 ? (
                 <div className="flex items-start gap-2">
                   <AlertCircle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
                   <div className="flex flex-wrap gap-1.5 items-center">
                     <span className="text-xs font-semibold" style={{ color: '#FCD34D' }}>Flagged:</span>
-                    {audit.flagged_terms.map((term, i) => (
+                    {flaggedTerms.map((term, i) => (
                       <span
                         key={i}
                         className="text-[11px] font-medium px-2 py-0.5 rounded-full"

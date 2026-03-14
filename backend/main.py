@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import openai
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 load_dotenv()
 
@@ -115,19 +116,20 @@ def strip_fences(raw: str) -> str:
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
 EXTRACTION_SYSTEM_PROMPT = open("prompts/extraction.txt").read()
+AUDIT_SYSTEM_PROMPT = open("prompts/audit.txt").read()
 
 # ── Auth ──────────────────────────────────────────────────────────────────
 
-def verify_token(token = Depends(security)):
-    user = supabase.auth.get_user(token.credentials)
-    if not user:
-        raise HTTPException(status_code=401)
-    return user
+# def verify_token(token = Depends(security)):
+#     user = supabase.auth.get_user(token.credentials)
+#     if not user:
+#         raise HTTPException(status_code=401)
+#     return user
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
+async def transcribe(req: TranscribeRequest):
     """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
     try:
         audio_bytes = base64.b64decode(req.audio_base64)
@@ -152,7 +154,7 @@ async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
 
 
 @app.post("/generate-note", response_model=SOAPNote)
-async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
+async def generate_note(req: GenerateNoteRequest):
     """Accepts transcript, returns structured SOAP note via Claude."""
     try:
         response = openrouter_client.chat.completions.create(
@@ -179,7 +181,7 @@ async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
 
 
 @app.post("/audit", response_model=AuditResponse)
-async def audit_note(req: AuditRequest, user = Depends(verify_token)):
+async def audit_note(req: AuditRequest):
     """Sends SOAP note to IBM watsonx.ai for quality scoring (or Claude fallback)."""
     try:
         ibm_api_key = os.getenv("IBM_WATSONX_API_KEY")
@@ -232,28 +234,62 @@ SOAP Note:
         if raw.startswith("json"):
             raw = raw[4:]
     data = json.loads(raw)
-    return AuditResponse(**data)
+    if not isinstance(data, dict):
+        raise ValueError("WatsonX audit did not return a JSON object")
+    return _coerce_audit_response(data)
 
 
-async def _audit_with_claude_fallback(note: str) -> AuditResponse:
-    """Use Claude as fallback auditor when IBM credentials not available."""
-    audit_prompt = open("prompts/audit.txt").read()
+def _coerce_audit_response(data: dict) -> AuditResponse:
+    quality_score = int(data.get("quality_score", 0))
+    quality_score = max(0, min(100, quality_score))
 
-    message = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
-        system=audit_prompt,
-        messages=[{"role": "user", "content": f"Audit this SOAP note:\n\n{note}"}],
+    completeness_raw = data.get("completeness_score", quality_score)
+    completeness_score = int(completeness_raw)
+    completeness_score = max(0, min(100, completeness_score))
+
+    flagged_terms = data.get("flagged_terms") or []
+    if not isinstance(flagged_terms, list):
+        flagged_terms = []
+    flagged_terms = [str(term) for term in flagged_terms if str(term).strip()]
+
+    consistency_notes = str(data.get("consistency_notes", "")).strip()
+
+    return AuditResponse(
+        quality_score=quality_score,
+        completeness_score=completeness_score,
+        flagged_terms=flagged_terms,
+        consistency_notes=consistency_notes,
     )
 
-    raw = message.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    data = json.loads(raw)
-    return AuditResponse(**data)
 
+async def _audit_with_openrouter_fallback(note: str) -> AuditResponse:
+    response = openrouter_client.chat.completions.create(
+        model=INFERENCE_MODEL,
+        max_tokens=768,
+        messages=[
+            {"role": "system", "content": AUDIT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "Return ONLY valid JSON with this exact schema:\n"
+                    "{\n"
+                    "  \"quality_score\": 0-100,\n"
+                    "  \"completeness_score\": 0-100,\n"
+                    "  \"flagged_terms\": [\"term\"],\n"
+                    "  \"consistency_notes\": \"brief note on alignment\"\n"
+                    "}\n\n"
+                    "SOAP Note:\n"
+                    f"{note}"
+                ),
+            },
+        ],
+    )
+
+    raw = strip_fences(extract_text(response))
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("Audit model did not return a JSON object")
+    return _coerce_audit_response(data)
 
 # ── WebSocket: client ↔ ElevenLabs realtime transcription proxy ─────────────
 
@@ -309,7 +345,10 @@ async def websocket_realtime_transcript(websocket: WebSocket):
                     try:
                         payload_raw = await websocket.receive_text()
                     except WebSocketDisconnect:
-                        await eleven_ws.close()
+                        try:
+                            await eleven_ws.close()
+                        except ConnectionClosed:
+                            pass
                         return
 
                     try:
@@ -328,12 +367,18 @@ async def websocket_realtime_transcript(websocket: WebSocket):
                             message["sample_rate"] = 16000
                         if payload.get("commit") is True:
                             message["commit"] = True
-                        await eleven_ws.send(json.dumps(message))
+                        try:
+                            await eleven_ws.send(json.dumps(message))
+                        except ConnectionClosed:
+                            return
                     elif payload_type == "commit":
                         # With VAD commit strategy, explicit empty commits are unnecessary.
                         continue
                     elif payload_type == "stop":
-                        await eleven_ws.close()
+                        try:
+                            await eleven_ws.close()
+                        except ConnectionClosed:
+                            pass
                         return
 
             async def forward_elevenlabs_to_client():
@@ -346,16 +391,25 @@ async def websocket_realtime_transcript(websocket: WebSocket):
                     message_type = server_msg.get("message_type", "")
 
                     if message_type == "session_started":
-                        await websocket.send_json({
-                            "type": "session_started",
-                            "session_id": server_msg.get("session_id"),
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "session_started",
+                                "session_id": server_msg.get("session_id"),
+                            })
+                        except WebSocketDisconnect:
+                            return
                     elif message_type == "partial_transcript":
-                        await websocket.send_json({
-                            "type": "partial",
-                            "text": server_msg.get("text", ""),
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "partial",
+                                "text": server_msg.get("text", ""),
+                            })
+                        except WebSocketDisconnect:
+                            return
                     elif message_type in ("committed_transcript", "committed_transcript_with_timestamps"):
+                        if ELEVENLABS_INCLUDE_TIMESTAMPS and message_type == "committed_transcript":
+                            continue
+
                         timestamp_ms = None
                         if message_type == "committed_transcript_with_timestamps":
                             words = server_msg.get("words") or []
@@ -364,24 +418,37 @@ async def websocket_realtime_transcript(websocket: WebSocket):
                                     timestamp_ms = int(float(token["start"]) * 1000)
                                     break
 
-                        await websocket.send_json({
-                            "type": "committed",
-                            "text": server_msg.get("text", ""),
-                            "timestamp_ms": timestamp_ms,
-                            "language_code": server_msg.get("language_code"),
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "committed",
+                                "text": server_msg.get("text", ""),
+                                "timestamp_ms": timestamp_ms,
+                                "language_code": server_msg.get("language_code"),
+                            })
+                        except WebSocketDisconnect:
+                            return
                     elif "error" in message_type:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": server_msg.get("message", "Realtime transcription error"),
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": server_msg.get("message", "Realtime transcription error"),
+                            })
+                        except WebSocketDisconnect:
+                            return
 
-            await asyncio.gather(
+            results = await asyncio.gather(
                 forward_client_audio_to_elevenlabs(),
                 forward_elevenlabs_to_client(),
+                return_exceptions=True,
             )
 
+            for result in results:
+                if isinstance(result, Exception) and not isinstance(result, (WebSocketDisconnect, ConnectionClosed)):
+                    raise result
+
     except Exception as e:
+        if isinstance(e, ConnectionClosed):
+            return
         try:
             await websocket.send_json({"type": "error", "message": str(e)})
         except Exception:

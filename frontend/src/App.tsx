@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { FileText, FileHeart } from 'lucide-react';
 import ControlBar from './components/ControlBar';
 import TranscriptPanel from './components/TranscriptPanel';
@@ -39,7 +39,21 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+
 type RightTab = 'soap' | 'patient';
+
+function getRealtimeWsUrl() {
+  const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+
+  if (apiUrl && /^https?:\/\//.test(apiUrl)) {
+    const wsBase = apiUrl.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+    return `${wsBase}/ws/realtime-transcript`;
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.host}/ws/realtime-transcript`;
+}
+
 
 export default function App() {
   const [status, setStatus]           = useState<SessionStatus>('idle');
@@ -51,14 +65,129 @@ export default function App() {
   const [rightTab, setRightTab]       = useState<RightTab>('soap');
 
   const demoIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const realtimeWsRef = useRef<WebSocket | null>(null);
+  const speakerTurnRef = useRef<'Doctor' | 'Patient'>('Doctor');
+  const partialLineIdRef = useRef<string | null>(null);
+  const recordingStartMsRef = useRef<number>(0);
+  const transcriptRef = useRef<TranscriptLine[]>([]);
+
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const timer = useSessionTimer();
+
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(() => {
+    return () => {
+      if (realtimeWsRef.current) {
+        realtimeWsRef.current.close();
+        realtimeWsRef.current = null;
+      }
+    };
+  }, []);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
   const addLine = useCallback((line: Omit<TranscriptLine, 'id'>) => {
     setTranscript((prev) => [...prev, { ...line, id: `${Date.now()}-${Math.random()}` }]);
   }, []);
+
+  const upsertPartialLine = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const speaker = speakerTurnRef.current;
+
+    setTranscript((prev) => {
+      const existingId = partialLineIdRef.current;
+      const partialId = existingId || `partial-${Date.now()}-${Math.random()}`;
+      partialLineIdRef.current = partialId;
+
+      const partialLine: TranscriptLine = {
+        id: partialId,
+        speaker,
+        text: trimmed,
+        timestamp: Date.now() - recordingStartMsRef.current,
+      };
+
+      const idx = prev.findIndex((line) => line.id === partialId);
+      if (idx === -1) return [...prev, partialLine];
+
+      const next = [...prev];
+      next[idx] = partialLine;
+      return next;
+    });
+  }, []);
+
+  const commitLiveLine = useCallback((text: string, timestampMs?: number) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const speaker = speakerTurnRef.current;
+
+    setTranscript((prev) => {
+      const withoutPartial = partialLineIdRef.current
+        ? prev.filter((line) => line.id !== partialLineIdRef.current)
+        : prev;
+
+      partialLineIdRef.current = null;
+
+      return [
+        ...withoutPartial,
+        {
+          id: `${Date.now()}-${Math.random()}`,
+          speaker,
+          text: trimmed,
+          timestamp: typeof timestampMs === 'number' ? timestampMs : Date.now() - recordingStartMsRef.current,
+        },
+      ];
+    });
+
+    speakerTurnRef.current = speaker === 'Doctor' ? 'Patient' : 'Doctor';
+  }, []);
+
+  const connectRealtimeTranscriptSocket = useCallback(async () => {
+    if (realtimeWsRef.current) {
+      realtimeWsRef.current.close();
+      realtimeWsRef.current = null;
+    }
+
+    const wsUrl = getRealtimeWsUrl();
+
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(wsUrl);
+      realtimeWsRef.current = ws;
+
+      ws.onopen = () => resolve();
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as {
+            type?: string;
+            text?: string;
+            timestamp_ms?: number;
+            message?: string;
+          };
+
+          if (msg.type === 'partial' && msg.text) {
+            upsertPartialLine(msg.text);
+          } else if (msg.type === 'committed' && msg.text) {
+            commitLiveLine(msg.text, msg.timestamp_ms);
+          } else if (msg.type === 'error') {
+            setError(msg.message || 'Realtime transcription failed');
+          }
+        } catch {
+          // Ignore malformed websocket messages
+        }
+      };
+
+      ws.onerror = () => reject(new Error('Could not connect to realtime transcription service'));
+      ws.onclose = () => {
+        if (realtimeWsRef.current === ws) realtimeWsRef.current = null;
+      };
+    });
+  }, [commitLiveLine, upsertPartialLine]);
 
   const generateNoteFromTranscript = useCallback(async (lines: TranscriptLine[]) => {
     setStatus('processing');
@@ -141,46 +270,83 @@ export default function App() {
     setNote(null);
     setAudit(null);
     setError(null);
+
     setRightTab('soap');
 
-    await startRecording();
+    partialLineIdRef.current = null;
+    speakerTurnRef.current = 'Doctor';
+    recordingStartMsRef.current = Date.now();
+
+    await connectRealtimeTranscriptSocket();
+
+    await startRecording({
+      onChunk: async (chunk) => {
+        if (!realtimeWsRef.current || realtimeWsRef.current.readyState !== WebSocket.OPEN) return;
+        realtimeWsRef.current.send(JSON.stringify({
+          type: 'audio_chunk',
+          audio_base64: chunk.base64,
+        }));
+      },
+    });
+
+
     setStatus('recording');
     timer.start();
-  }, [startRecording, timer]);
+  }, [connectRealtimeTranscriptSocket, startRecording, timer]);
 
   const endSession = useCallback(async () => {
     timer.stop();
 
     if (isRecording) {
       const blob = await stopRecording();
+
+      if (realtimeWsRef.current && realtimeWsRef.current.readyState === WebSocket.OPEN) {
+        realtimeWsRef.current.send(JSON.stringify({ type: 'commit' }));
+        realtimeWsRef.current.send(JSON.stringify({ type: 'stop' }));
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 900));
+
+      if (realtimeWsRef.current) {
+        realtimeWsRef.current.close();
+        realtimeWsRef.current = null;
+      }
+
+      const liveLines = transcriptRef.current.filter((line) => !line.id.startsWith('partial-'));
+
       if (blob) {
-        setStatus('processing');
-        try {
-          const b64 = await blobToBase64(blob);
-          const res = await fetch(`${API}/transcribe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
-          });
+        if (liveLines.length > 0) {
+          setTranscript(liveLines);
+          await generateNoteFromTranscript(liveLines);
+        } else {
+          setStatus('processing');
+          try {
+            const b64 = await blobToBase64(blob);
+            const res = await fetch(`${API}/transcribe`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
+            });
 
-          if (!res.ok) throw new Error('Transcription failed');
-          const { transcript: raw }: { transcript: string } = await res.json();
+            if (!res.ok) throw new Error('Transcription failed');
+            const { transcript: raw }: { transcript: string } = await res.json();
 
-          const lines: TranscriptLine[] = raw
-            .split(/[.!?]+/)
-            .filter((s) => s.trim().length > 0)
-            .map((s, idx) => ({
-              id: String(idx),
-              speaker: idx % 2 === 0 ? 'Doctor' : 'Patient',
-              text: s.trim(),
-              timestamp: idx * 3000,
-            }));
+            const lines: TranscriptLine[] = raw
+              .split(/[.!?]+/)
+              .filter((s) => s.trim().length > 0)
+              .map((s, idx) => ({
+                id: String(idx),
+                speaker: idx % 2 === 0 ? 'Doctor' : 'Patient',
+                text: s.trim(),
+                timestamp: idx * 3000,
+              }));
 
-          setTranscript(lines);
-          await generateNoteFromTranscript(lines);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Transcription error');
-          setStatus('done');
+            setTranscript(lines);
+            await generateNoteFromTranscript(lines);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Transcription error');
+            setStatus('done');
+          }
         }
       }
     } else {
@@ -190,6 +356,12 @@ export default function App() {
 
   const reset = useCallback(() => {
     if (demoIntervalRef.current) clearTimeout(demoIntervalRef.current);
+    if (realtimeWsRef.current) {
+      realtimeWsRef.current.close();
+      realtimeWsRef.current = null;
+    }
+    partialLineIdRef.current = null;
+    speakerTurnRef.current = 'Doctor';
     setStatus('idle');
     setTranscript([]);
     setNote(null);

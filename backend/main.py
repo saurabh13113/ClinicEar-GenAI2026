@@ -3,13 +3,14 @@ import json
 import base64
 import asyncio
 import tempfile
-from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import openai
+import websockets
 
 load_dotenv()
 
@@ -185,6 +186,7 @@ async def generate_note(req: GenerateNoteRequest):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Model returned invalid JSON: {e}")
     except Exception as e:
+        print(f"Error in /generate-note: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -269,22 +271,137 @@ async def _audit_with_openrouter_fallback(note: str) -> AuditResponse:
     return AuditResponse(**data)
 
 
-# ── WebSocket for streaming transcript ────────────────────────────────────────
+# ── WebSocket: client ↔ ElevenLabs realtime transcription proxy ─────────────
 
-active_connections: list[WebSocket] = []
+ELEVENLABS_REALTIME_URL = os.getenv(
+    "ELEVENLABS_REALTIME_URL",
+    "wss://api.elevenlabs.io/v1/speech-to-text/realtime",
+)
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "scribe_v2_realtime")
+ELEVENLABS_AUDIO_FORMAT = os.getenv("ELEVENLABS_AUDIO_FORMAT", "pcm_16000")
+ELEVENLABS_LANGUAGE_CODE = os.getenv("ELEVENLABS_LANGUAGE_CODE", "en")
+ELEVENLABS_INCLUDE_TIMESTAMPS = os.getenv("ELEVENLABS_INCLUDE_TIMESTAMPS", "true").lower() == "true"
+ELEVENLABS_COMMIT_STRATEGY = os.getenv("ELEVENLABS_COMMIT_STRATEGY", "vad")
 
 
-@app.websocket("/ws/transcript")
-async def websocket_transcript(websocket: WebSocket):
+def _build_elevenlabs_realtime_url() -> str:
+    query = {
+        "model_id": ELEVENLABS_MODEL_ID,
+        "audio_format": ELEVENLABS_AUDIO_FORMAT,
+        "language_code": ELEVENLABS_LANGUAGE_CODE,
+        "include_timestamps": str(ELEVENLABS_INCLUDE_TIMESTAMPS).lower(),
+        "commit_strategy": ELEVENLABS_COMMIT_STRATEGY,
+    }
+    return f"{ELEVENLABS_REALTIME_URL}?{urlencode(query)}"
+
+
+@app.websocket("/ws/realtime-transcript")
+async def websocket_realtime_transcript(websocket: WebSocket):
     await websocket.accept()
-    active_connections.append(websocket)
+
+    elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
+    if not elevenlabs_api_key:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Missing ELEVENLABS_API_KEY in backend environment",
+        })
+        await websocket.close(code=1011)
+        return
+
+    elevenlabs_url = _build_elevenlabs_realtime_url()
+
     try:
-        while True:
-            data = await websocket.receive_text()
-            # Echo back for now; real implementation streams Whisper chunks
-            await websocket.send_text(data)
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
+        async with websockets.connect(
+            elevenlabs_url,
+            extra_headers={"xi-api-key": elevenlabs_api_key},
+            ping_interval=20,
+            ping_timeout=20,
+            max_size=2_000_000,
+        ) as eleven_ws:
+            await websocket.send_json({"type": "ready"})
+
+            async def forward_client_audio_to_elevenlabs():
+                while True:
+                    try:
+                        payload_raw = await websocket.receive_text()
+                    except WebSocketDisconnect:
+                        await eleven_ws.close()
+                        return
+
+                    try:
+                        payload = json.loads(payload_raw)
+                    except json.JSONDecodeError:
+                        continue
+
+                    payload_type = payload.get("type")
+
+                    if payload_type == "audio_chunk":
+                        message = {
+                            "message_type": "input_audio_chunk",
+                            "audio_base_64": payload.get("audio_base64", ""),
+                        }
+                        if ELEVENLABS_AUDIO_FORMAT.startswith("pcm"):
+                            message["sample_rate"] = 16000
+                        if payload.get("commit") is True:
+                            message["commit"] = True
+                        await eleven_ws.send(json.dumps(message))
+                    elif payload_type == "commit":
+                        # With VAD commit strategy, explicit empty commits are unnecessary.
+                        continue
+                    elif payload_type == "stop":
+                        await eleven_ws.close()
+                        return
+
+            async def forward_elevenlabs_to_client():
+                async for server_msg_raw in eleven_ws:
+                    try:
+                        server_msg = json.loads(server_msg_raw)
+                    except json.JSONDecodeError:
+                        continue
+
+                    message_type = server_msg.get("message_type", "")
+
+                    if message_type == "session_started":
+                        await websocket.send_json({
+                            "type": "session_started",
+                            "session_id": server_msg.get("session_id"),
+                        })
+                    elif message_type == "partial_transcript":
+                        await websocket.send_json({
+                            "type": "partial",
+                            "text": server_msg.get("text", ""),
+                        })
+                    elif message_type in ("committed_transcript", "committed_transcript_with_timestamps"):
+                        timestamp_ms = None
+                        if message_type == "committed_transcript_with_timestamps":
+                            words = server_msg.get("words") or []
+                            for token in words:
+                                if token.get("type") == "word" and token.get("start") is not None:
+                                    timestamp_ms = int(float(token["start"]) * 1000)
+                                    break
+
+                        await websocket.send_json({
+                            "type": "committed",
+                            "text": server_msg.get("text", ""),
+                            "timestamp_ms": timestamp_ms,
+                            "language_code": server_msg.get("language_code"),
+                        })
+                    elif "error" in message_type:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": server_msg.get("message", "Realtime transcription error"),
+                        })
+
+            await asyncio.gather(
+                forward_client_audio_to_elevenlabs(),
+                forward_elevenlabs_to_client(),
+            )
+
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
 
 
 @app.get("/health")

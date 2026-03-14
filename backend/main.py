@@ -423,7 +423,7 @@ ELEVENLABS_AUDIO_FORMAT = os.getenv("ELEVENLABS_AUDIO_FORMAT", "pcm_16000")
 ELEVENLABS_LANGUAGE_CODE = os.getenv("ELEVENLABS_LANGUAGE_CODE", "en")
 ELEVENLABS_INCLUDE_TIMESTAMPS = os.getenv("ELEVENLABS_INCLUDE_TIMESTAMPS", "true").lower() == "true"
 ELEVENLABS_COMMIT_STRATEGY = os.getenv("ELEVENLABS_COMMIT_STRATEGY", "vad")
-
+ELEVENLABS_VAD_THRESHOLD = float(os.getenv("ELEVENLABS_VAD_THRESHOLD", "0.3"))
 
 def _build_elevenlabs_realtime_url() -> str:
     query = {
@@ -432,6 +432,7 @@ def _build_elevenlabs_realtime_url() -> str:
         "language_code": ELEVENLABS_LANGUAGE_CODE,
         "include_timestamps": str(ELEVENLABS_INCLUDE_TIMESTAMPS).lower(),
         "commit_strategy": ELEVENLABS_COMMIT_STRATEGY,
+        "vad_silence_threshold_secs": ELEVENLABS_VAD_THRESHOLD
     }
     return f"{ELEVENLABS_REALTIME_URL}?{urlencode(query)}"
 

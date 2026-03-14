@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from supabase import create_client
@@ -208,16 +208,16 @@ AUDIT_SYSTEM_PROMPT = open("prompts/audit.txt").read()
 
 # ── Auth ──────────────────────────────────────────────────────────────────
 
-# def verify_token(token = Depends(security)):
-#     user = supabase.auth.get_user(token.credentials)
-#     if not user:
-#         raise HTTPException(status_code=401)
-#     return user
+def verify_token(token = Depends(security)):
+    user = supabase.auth.get_user(token.credentials)
+    if not user:
+        raise HTTPException(status_code=401)
+    return user
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe(req: TranscribeRequest):
+async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
     """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
     try:
         audio_bytes = base64.b64decode(req.audio_base64)
@@ -242,7 +242,7 @@ async def transcribe(req: TranscribeRequest):
 
 
 @app.post("/generate-note", response_model=SOAPNote)
-async def generate_note(req: GenerateNoteRequest):
+async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
     """Accepts transcript, returns structured SOAP note via Claude."""
     try:
         response = openrouter_client.chat.completions.create(
@@ -259,6 +259,12 @@ async def generate_note(req: GenerateNoteRequest):
 
         raw = strip_fences(extract_text(response))
         data = json.loads(raw)
+
+        supabase.table("consultations").insert({
+            "created_by": user.user.id,
+            "soap": data,
+        }).execute()
+        
         return SOAPNote(**data)
 
     except json.JSONDecodeError as e:
@@ -269,7 +275,7 @@ async def generate_note(req: GenerateNoteRequest):
 
 
 @app.post("/audit", response_model=AuditResponse)
-async def audit_note(req: AuditRequest):
+async def audit_note(req: AuditRequest, user = Depends(verify_token)):
     """Sends SOAP note to IBM watsonx.ai for quality scoring (or Claude fallback)."""
     try:
         ibm_enabled = _env_flag("IBM_WATSONX_ENABLED", default=True)

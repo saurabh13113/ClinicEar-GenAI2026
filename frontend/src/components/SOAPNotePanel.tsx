@@ -172,7 +172,7 @@ export default function SOAPNotePanel({ note, status }: SOAPNotePanelProps) {
 
         {/* SOAP sections */}
         {note && SECTIONS.map((s) => {
-          const conf = note.confidence_scores[s.key];
+          const conf = note.confidence_scores?.[s.key] ?? 1.0;
           const isLow = conf < 0.7;
           return (
             <div

@@ -7,6 +7,8 @@ from urllib.parse import urlencode
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer
+from supabase import create_client
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import openai
@@ -51,6 +53,9 @@ openrouter_client = openai.OpenAI(
     ),
     api_key=os.getenv("OPENROUTER_API_KEY", "test"),
 )
+
+security = HTTPBearer()
+supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -109,37 +114,20 @@ def strip_fences(raw: str) -> str:
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
-EXTRACTION_SYSTEM_PROMPT = """You are a clinical documentation AI. Given a doctor-patient conversation transcript,
-extract structured clinical information and return ONLY valid JSON — no markdown, no explanation.
+EXTRACTION_SYSTEM_PROMPT = open("prompts/extraction.txt").read()
 
-Return this exact JSON schema:
-{
-  "subjective": "patient-reported symptoms paraphrased in clinical language",
-  "objective": "vitals, observations, and measurements mentioned",
-  "assessment": "primary diagnosis or differential diagnoses extracted from physician speech",
-  "plan": "prescribed medications, referrals, follow-ups, lifestyle instructions",
-  "icd10_suggestions": ["ICD-10 code: description", ...],
-  "confidence_scores": {
-    "subjective": 0.0-1.0,
-    "objective": 0.0-1.0,
-    "assessment": 0.0-1.0,
-    "plan": 0.0-1.0
-  },
-  "gaps": ["list of clinically expected fields not mentioned in the conversation"]
-}
+# ── Auth ──────────────────────────────────────────────────────────────────
 
-Rules:
-- Write in clinical register (not layman language, not bullet points)
-- Assign confidence < 0.7 if a section relies on inference rather than explicit mention
-- gaps[] should list things like "blood pressure not recorded", "medication dosage unclear"
-- icd10_suggestions must use real ICD-10 codes
-"""
-
+def verify_token(token = Depends(security)):
+    user = supabase.auth.get_user(token.credentials)
+    if not user:
+        raise HTTPException(status_code=401)
+    return user
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe(req: TranscribeRequest):
+async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
     """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
     try:
         audio_bytes = base64.b64decode(req.audio_base64)
@@ -164,8 +152,8 @@ async def transcribe(req: TranscribeRequest):
 
 
 @app.post("/generate-note", response_model=SOAPNote)
-async def generate_note(req: GenerateNoteRequest):
-    """Accepts transcript, returns structured SOAP note via OpenRouter."""
+async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
+    """Accepts transcript, returns structured SOAP note via Claude."""
     try:
         response = openrouter_client.chat.completions.create(
             model=INFERENCE_MODEL,
@@ -191,7 +179,7 @@ async def generate_note(req: GenerateNoteRequest):
 
 
 @app.post("/audit", response_model=AuditResponse)
-async def audit_note(req: AuditRequest):
+async def audit_note(req: AuditRequest, user = Depends(verify_token)):
     """Sends SOAP note to IBM watsonx.ai for quality scoring (or Claude fallback)."""
     try:
         ibm_api_key = os.getenv("IBM_WATSONX_API_KEY")
@@ -247,26 +235,22 @@ SOAP Note:
     return AuditResponse(**data)
 
 
-async def _audit_with_openrouter_fallback(note: str) -> AuditResponse:
-    """Use OpenRouter as fallback auditor when IBM credentials not available."""
-    audit_prompt = """You are a clinical documentation auditor. Audit this SOAP note and return ONLY valid JSON:
-{
-  "quality_score": 0-100,
-  "completeness_score": 0-100,
-  "flagged_terms": ["list of non-standard abbreviations or unclear medical terms"],
-  "consistency_notes": "brief assessment of plan/assessment alignment"
-}"""
+async def _audit_with_claude_fallback(note: str) -> AuditResponse:
+    """Use Claude as fallback auditor when IBM credentials not available."""
+    audit_prompt = open("prompts/audit.txt").read()
 
-    response = openrouter_client.chat.completions.create(
-        model=INFERENCE_MODEL,
-        max_tokens=1024,
-        messages=[
-            {"role": "system", "content": audit_prompt},
-            {"role": "user", "content": f"Audit this SOAP note:\n\n{note}"},
-        ],
+    message = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=512,
+        system=audit_prompt,
+        messages=[{"role": "user", "content": f"Audit this SOAP note:\n\n{note}"}],
     )
 
-    raw = strip_fences(extract_text(response))
+    raw = message.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
     data = json.loads(raw)
     return AuditResponse(**data)
 

@@ -3,7 +3,9 @@ import json
 import base64
 import asyncio
 import tempfile
+from pathlib import Path
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +17,7 @@ import openai
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 app = FastAPI(title="ClinicalEar API")
 
@@ -113,6 +115,92 @@ def strip_fences(raw: str) -> str:
     return raw.strip()
 
 
+def parse_first_json_object(raw: str, preferred_keys: set[str] | None = None) -> dict:
+    candidate = strip_fences(raw)
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            if not preferred_keys or preferred_keys.intersection(set(parsed.keys())):
+                return parsed
+            # keep searching if parsed object doesn't look like the expected schema
+            pass
+        else:
+            parsed = None
+    except Exception:
+        parsed = None
+
+    candidates: list[dict] = []
+    if isinstance(parsed, dict):
+        candidates.append(parsed)
+
+    text = raw or ""
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for idx in range(start, len(text)):
+            char = text[idx]
+
+            if escape:
+                escape = False
+                continue
+
+            if char == "\\":
+                escape = True
+                continue
+
+            if char == '"':
+                in_string = not in_string
+                continue
+
+            if in_string:
+                continue
+
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    snippet = text[start:idx + 1]
+                    try:
+                        parsed_snippet = json.loads(snippet)
+                        if isinstance(parsed_snippet, dict):
+                            candidates.append(parsed_snippet)
+                    except Exception:
+                        pass
+                    break
+
+        start = text.find("{", start + 1)
+
+    if not candidates:
+        raise ValueError("Model returned no parseable JSON object")
+
+    if preferred_keys:
+        def score(item: dict) -> int:
+            return len(preferred_keys.intersection(set(item.keys())))
+
+        best = max(candidates, key=score)
+        if score(best) > 0:
+            return best
+
+    return candidates[0]
+
+
+def _is_valid_url(value: str | None) -> bool:
+    if not value:
+        return False
+    parsed = urlparse(value.strip())
+    return bool(parsed.scheme and parsed.netloc)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
 EXTRACTION_SYSTEM_PROMPT = open("prompts/extraction.txt").read()
@@ -184,31 +272,58 @@ async def generate_note(req: GenerateNoteRequest):
 async def audit_note(req: AuditRequest):
     """Sends SOAP note to IBM watsonx.ai for quality scoring (or Claude fallback)."""
     try:
-        ibm_api_key = os.getenv("IBM_WATSONX_API_KEY")
-        ibm_project_id = os.getenv("IBM_WATSONX_PROJECT_ID")
+        ibm_enabled = _env_flag("IBM_WATSONX_ENABLED", default=True)
+        debug_ibm_errors = _env_flag("DEBUG_IBM_WATSONX_ERRORS", default=False)
+        ibm_api_key = (os.getenv("IBM_WATSONX_API_KEY") or "").strip()
+        ibm_project_id = (os.getenv("IBM_WATSONX_PROJECT_ID") or "").strip()
+        ibm_url = (os.getenv("IBM_WATSONX_URL") or "https://us-south.ml.cloud.ibm.com").strip().rstrip("/")
 
-        if ibm_api_key and ibm_project_id:
+        missing_reasons: list[str] = []
+        if not ibm_enabled:
+            missing_reasons.append("IBM_WATSONX_ENABLED=false")
+        if not ibm_api_key:
+            missing_reasons.append("missing IBM_WATSONX_API_KEY")
+        if not ibm_project_id:
+            missing_reasons.append("missing IBM_WATSONX_PROJECT_ID")
+        if not _is_valid_url(ibm_url):
+            missing_reasons.append("invalid IBM_WATSONX_URL")
+
+        if not missing_reasons:
             try:
-                return await _audit_with_watsonx(req.soap_note, ibm_api_key, ibm_project_id)
+                print("Attempting audit with IBM WatsonX...")
+                return await _audit_with_watsonx(req.soap_note, ibm_api_key, ibm_project_id, ibm_url)
             except Exception as ibm_err:
-                print(f"IBM WatsonX audit failed ({ibm_err}), falling back to inference server")
+                if debug_ibm_errors:
+                    print(f"IBM WatsonX audit failed ({ibm_err}), falling back to inference server")
+                else:
+                    print("IBM WatsonX audit unavailable; falling back to inference server")
                 return await _audit_with_openrouter_fallback(req.soap_note)
         else:
+            print(
+                "IBM WatsonX audit not configured properly "
+                f"({', '.join(missing_reasons)}), using inference server fallback"
+            )
             return await _audit_with_openrouter_fallback(req.soap_note)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _audit_with_watsonx(note: str, api_key: str, project_id: str) -> AuditResponse:
+async def _audit_with_watsonx(note: str, api_key: str, project_id: str, url: str) -> AuditResponse:
     from ibm_watsonx_ai import APIClient, Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
 
-    credentials = Credentials(
-        url=os.getenv("IBM_WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
-        api_key=api_key,
-    )
+    credentials_kwargs = {
+        "url": url,
+        "api_key": api_key,
+    }
+    instance_id = (os.getenv("IBM_WATSONX_INSTANCE_ID") or "").strip()
+    if instance_id:
+        credentials_kwargs["instance_id"] = instance_id
+
+    credentials = Credentials(**credentials_kwargs)
     client = APIClient(credentials)
+
     model = ModelInference(
         model_id="meta-llama/llama-3-3-70b-instruct",
         api_client=client,
@@ -228,14 +343,10 @@ SOAP Note:
 {note}"""
 
     response = model.generate_text(prompt=prompt)
-    raw = response.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        raise ValueError("WatsonX audit did not return a JSON object")
+    data = parse_first_json_object(
+        response.strip(),
+        preferred_keys={"quality_score", "completeness_score", "flagged_terms", "consistency_notes"},
+    )
     return _coerce_audit_response(data)
 
 
@@ -285,10 +396,10 @@ async def _audit_with_openrouter_fallback(note: str) -> AuditResponse:
         ],
     )
 
-    raw = strip_fences(extract_text(response))
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        raise ValueError("Audit model did not return a JSON object")
+    data = parse_first_json_object(
+        extract_text(response),
+        preferred_keys={"quality_score", "completeness_score", "flagged_terms", "consistency_notes"},
+    )
     return _coerce_audit_response(data)
 
 # ── WebSocket: client ↔ ElevenLabs realtime transcription proxy ─────────────

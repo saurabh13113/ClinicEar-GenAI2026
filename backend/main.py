@@ -221,7 +221,7 @@ def verify_token(token = Depends(security)):
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
+async def transcribe(req: TranscribeRequest):
     """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
     try:
         audio_bytes = base64.b64decode(req.audio_base64)
@@ -246,7 +246,7 @@ async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
 
 
 @app.post("/generate-note", response_model=SOAPNote)
-async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
+async def generate_note(req: GenerateNoteRequest):
     """Accepts transcript, returns structured SOAP note via Claude."""
     try:
         response = openrouter_client.chat.completions.create(
@@ -263,12 +263,6 @@ async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
 
         raw = strip_fences(extract_text(response))
         data = json.loads(raw)
-
-        supabase.table("consultations").insert({
-            "created_by": user.user.id,
-            "soap": data,
-        }).execute()
-        
         return SOAPNote(**data)
 
     except json.JSONDecodeError as e:
@@ -279,7 +273,7 @@ async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
 
 
 @app.post("/audit", response_model=AuditResponse)
-async def audit_note(req: AuditRequest, user = Depends(verify_token)):
+async def audit_note(req: AuditRequest):
     """Sends SOAP note to IBM watsonx.ai for quality scoring (or Claude fallback)."""
     try:
         ibm_enabled = _env_flag("IBM_WATSONX_ENABLED", default=True)

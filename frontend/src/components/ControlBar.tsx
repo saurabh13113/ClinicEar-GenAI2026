@@ -1,6 +1,5 @@
 import { Mic, MicOff, Play, Loader2, RotateCcw, Timer } from 'lucide-react';
 import type { SessionStatus } from '../types';
-import { supabase } from '../supabase';
 
 interface ControlBarProps {
   status: SessionStatus;
@@ -187,7 +186,7 @@ export default function ControlBar({
             style={{ borderLeft: '1px solid rgba(255,255,255,0.07)' }}
           >
             <button
-            onClick={() => supabase.auth.signOut()}
+            onClick={() => {}}
             className="text-[10px] font-bold px-2 py-1 rounded-full transition-all duration-150"
             style={{
                 background: 'rgba(255,255,255,0.04)',

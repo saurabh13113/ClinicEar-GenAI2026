@@ -2,7 +2,7 @@ import anthropic
 import json
 
 # Insert Claude API key
-client = anthropic.Anthropic(api_key="...")
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Consultation scripts
 transcripts = []

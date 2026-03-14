@@ -218,7 +218,7 @@ async def _audit_with_watsonx(note: str, api_key: str, project_id: str) -> Audit
     )
     client = APIClient(credentials)
     model = ModelInference(
-        model_id="ibm/granite-13b-instruct-v2",
+        model_id="meta-llama/llama-3-3-70b-instruct",
         api_client=client,
         project_id=project_id,
         params={"max_new_tokens": 512, "temperature": 0.1},

@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef } from 'react';
+import { FileText, FileHeart } from 'lucide-react';
 import ControlBar from './components/ControlBar';
 import TranscriptPanel from './components/TranscriptPanel';
 import SOAPNotePanel from './components/SOAPNotePanel';
+import PatientSummaryPanel from './components/PatientSummaryPanel';
 import AuditPanel from './components/AuditPanel';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useSessionTimer } from './hooks/useSessionTimer';
@@ -30,20 +32,23 @@ function blobToBase64(blob: Blob): Promise<string> {
     const reader = new FileReader();
     reader.onloadend = () => {
       const result = reader.result as string;
-      resolve(result.split(',')[1]); // strip data:...;base64,
+      resolve(result.split(',')[1]);
     };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
 }
 
+type RightTab = 'soap' | 'patient';
+
 export default function App() {
-  const [status, setStatus] = useState<SessionStatus>('idle');
-  const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
-  const [note, setNote] = useState<SOAPNote | null>(null);
-  const [audit, setAudit] = useState<AuditResult | null>(null);
+  const [status, setStatus]           = useState<SessionStatus>('idle');
+  const [transcript, setTranscript]   = useState<TranscriptLine[]>([]);
+  const [note, setNote]               = useState<SOAPNote | null>(null);
+  const [audit, setAudit]             = useState<AuditResult | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]             = useState<string | null>(null);
+  const [rightTab, setRightTab]       = useState<RightTab>('soap');
 
   const demoIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
@@ -57,9 +62,7 @@ export default function App() {
 
   const generateNoteFromTranscript = useCallback(async (lines: TranscriptLine[]) => {
     setStatus('processing');
-    const fullText = lines
-      .map((l) => `${l.speaker}: ${l.text}`)
-      .join('\n');
+    const fullText = lines.map((l) => `${l.speaker}: ${l.text}`).join('\n');
 
     try {
       const res = await fetch(`${API}/generate-note`, {
@@ -104,12 +107,12 @@ export default function App() {
     setNote(null);
     setAudit(null);
     setError(null);
+    setRightTab('soap');
     timer.start();
 
     let i = 0;
     const scheduleNext = () => {
       if (i >= DEMO_TRANSCRIPT_LINES.length) {
-        // Auto-end after last line
         setTimeout(() => {
           timer.stop();
           generateNoteFromTranscript(
@@ -138,6 +141,7 @@ export default function App() {
     setNote(null);
     setAudit(null);
     setError(null);
+    setRightTab('soap');
 
     await startRecording();
     setStatus('recording');
@@ -162,7 +166,6 @@ export default function App() {
           if (!res.ok) throw new Error('Transcription failed');
           const { transcript: raw }: { transcript: string } = await res.json();
 
-          // Split into lines (basic heuristic — no real diarization for MVP)
           const lines: TranscriptLine[] = raw
             .split(/[.!?]+/)
             .filter((s) => s.trim().length > 0)
@@ -181,7 +184,6 @@ export default function App() {
         }
       }
     } else {
-      // Demo mode — use existing transcript
       await generateNoteFromTranscript(transcript);
     }
   }, [isRecording, stopRecording, transcript, generateNoteFromTranscript, timer]);
@@ -193,16 +195,18 @@ export default function App() {
     setNote(null);
     setAudit(null);
     setError(null);
+    setRightTab('soap');
     timer.reset();
   }, [timer]);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-screen" style={{ background: '#F0F2F7', fontFamily: 'Sora, sans-serif' }}>
+    <div className="flex flex-col h-screen" style={{ background: '#050C1A', fontFamily: 'Sora, sans-serif' }}>
       <ControlBar
         status={status}
         timerFormatted={timer.formatted}
+        turnCount={transcript.length}
         onStartLive={startLive}
         onStartDemo={startDemo}
         onEnd={endSession}
@@ -211,24 +215,88 @@ export default function App() {
 
       {/* Error banner */}
       {error && (
-        <div className="px-5 py-2 text-xs font-semibold flex items-center gap-2" style={{ background: '#FEF2F2', borderBottom: '1px solid #FECACA', color: '#B91C1C' }}>
+        <div
+          className="px-5 py-2 text-xs font-semibold flex items-center gap-2"
+          style={{
+            background: 'rgba(239,68,68,0.08)',
+            borderBottom: '1px solid rgba(239,68,68,0.2)',
+            color: '#FCA5A5',
+          }}
+        >
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
           {error}
         </div>
       )}
 
       {/* Main panels */}
-      <div className="flex flex-1 overflow-hidden gap-px" style={{ background: '#E2E6EF', padding: '0' }}>
+      <div
+        className="flex flex-1 overflow-hidden"
+        style={{ gap: '1px', background: 'rgba(255,255,255,0.04)' }}
+      >
         {/* Left: Transcript */}
         <div className="w-[44%] flex flex-col overflow-hidden">
           <TranscriptPanel lines={transcript} status={status} />
         </div>
 
-        {/* Right: SOAP Note + Audit */}
+        {/* Right: Tab panel + Audit */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-hidden">
-            <SOAPNotePanel note={note} status={status} />
+
+          {/* Tab bar */}
+          <div
+            className="shrink-0 flex items-center gap-1 px-4"
+            style={{
+              background: '#0A1628',
+              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              height: '44px',
+            }}
+          >
+            <button
+              onClick={() => setRightTab('soap')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
+              style={
+                rightTab === 'soap'
+                  ? { background: 'rgba(29,78,216,0.14)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.28)' }
+                  : { background: 'transparent', color: '#2E4A66', border: '1px solid transparent' }
+              }
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Clinical Note
+            </button>
+
+            <button
+              onClick={() => setRightTab('patient')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
+              style={
+                rightTab === 'patient'
+                  ? { background: 'rgba(244,114,182,0.1)', color: '#F9A8D4', border: '1px solid rgba(244,114,182,0.22)' }
+                  : { background: 'transparent', color: '#2E4A66', border: '1px solid transparent' }
+              }
+            >
+              <FileHeart className="w-3.5 h-3.5" />
+              Patient Summary
+            </button>
+
+            {/* Note ready indicator */}
+            {note && (
+              <span
+                className="ml-auto text-[10px] font-semibold px-2 py-1 rounded-full"
+                style={{ background: 'rgba(16,185,129,0.1)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.18)' }}
+              >
+                Note ready
+              </span>
+            )}
           </div>
+
+          {/* Panel content */}
+          <div className="flex-1 overflow-hidden">
+            {rightTab === 'soap' ? (
+              <SOAPNotePanel note={note} status={status} />
+            ) : (
+              <PatientSummaryPanel note={note} status={status} />
+            )}
+          </div>
+
+          {/* Audit strip — always visible */}
           <AuditPanel audit={audit} isLoading={auditLoading} />
         </div>
       </div>

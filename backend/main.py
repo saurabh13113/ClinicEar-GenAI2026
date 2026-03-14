@@ -9,7 +9,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-import anthropic
 import openai
 
 load_dotenv()
@@ -26,8 +25,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Whisper transcription — uses Groq (free) if GROQ_API_KEY is set, else OpenAI
+_groq_key = os.getenv("GROQ_API_KEY")
+_openai_key = os.getenv("OPENAI_API_KEY")
+if _groq_key:
+    WHISPER_MODEL = "whisper-large-v3-turbo"
+    openai_client = openai.OpenAI(
+        api_key=_groq_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
+else:
+    WHISPER_MODEL = "whisper-1"
+    openai_client = openai.OpenAI(api_key=_openai_key)
+
+# SOAP note generation + audit — free hackathon GPT-OSS 120B server
+# Fallback: set OPENROUTER_API_KEY to use OpenRouter instead
+_use_openrouter = bool(os.getenv("OPENROUTER_API_KEY"))
+INFERENCE_MODEL = os.getenv("INFERENCE_MODEL", "openai/gpt-oss-120b")
+openrouter_client = openai.OpenAI(
+    base_url=(
+        "https://openrouter.ai/api/v1"
+        if _use_openrouter
+        else "https://vjioo4r1vyvcozuj.us-east-2.aws.endpoints.huggingface.cloud/v1"
+    ),
+    api_key=os.getenv("OPENROUTER_API_KEY", "test"),
+)
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -64,6 +86,24 @@ class AuditResponse(BaseModel):
     flagged_terms: list[str]
     completeness_score: int
     consistency_notes: str
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def extract_text(response) -> str:
+    """Extract text from a chat completion, falling back to reasoning field."""
+    msg = response.choices[0].message
+    text = msg.content or getattr(msg, "reasoning", None) or ""
+    return text.strip()
+
+
+def strip_fences(raw: str) -> str:
+    """Remove markdown code fences from a string."""
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return raw.strip()
 
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
@@ -110,7 +150,7 @@ async def transcribe(req: TranscribeRequest):
 
         with open(tmp_path, "rb") as audio_file:
             result = openai_client.audio.transcriptions.create(
-                model="whisper-1",
+                model=WHISPER_MODEL,
                 file=audio_file,
                 response_format="text",
             )
@@ -124,31 +164,26 @@ async def transcribe(req: TranscribeRequest):
 
 @app.post("/generate-note", response_model=SOAPNote)
 async def generate_note(req: GenerateNoteRequest):
-    """Accepts transcript, returns structured SOAP note via Claude."""
+    """Accepts transcript, returns structured SOAP note via OpenRouter."""
     try:
-        message = anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
+        response = openrouter_client.chat.completions.create(
+            model=INFERENCE_MODEL,
             max_tokens=2048,
-            system=EXTRACTION_SYSTEM_PROMPT,
             messages=[
+                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}",
-                }
+                },
             ],
         )
 
-        raw = message.content[0].text.strip()
-        # Strip markdown code fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
+        raw = strip_fences(extract_text(response))
         data = json.loads(raw)
         return SOAPNote(**data)
 
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Claude returned invalid JSON: {e}")
+        raise HTTPException(status_code=500, detail=f"Model returned invalid JSON: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -161,9 +196,13 @@ async def audit_note(req: AuditRequest):
         ibm_project_id = os.getenv("IBM_WATSONX_PROJECT_ID")
 
         if ibm_api_key and ibm_project_id:
-            return await _audit_with_watsonx(req.soap_note, ibm_api_key, ibm_project_id)
+            try:
+                return await _audit_with_watsonx(req.soap_note, ibm_api_key, ibm_project_id)
+            except Exception as ibm_err:
+                print(f"IBM WatsonX audit failed ({ibm_err}), falling back to inference server")
+                return await _audit_with_openrouter_fallback(req.soap_note)
         else:
-            return await _audit_with_claude_fallback(req.soap_note)
+            return await _audit_with_openrouter_fallback(req.soap_note)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -206,8 +245,8 @@ SOAP Note:
     return AuditResponse(**data)
 
 
-async def _audit_with_claude_fallback(note: str) -> AuditResponse:
-    """Use Claude as fallback auditor when IBM credentials not available."""
+async def _audit_with_openrouter_fallback(note: str) -> AuditResponse:
+    """Use OpenRouter as fallback auditor when IBM credentials not available."""
     audit_prompt = """You are a clinical documentation auditor. Audit this SOAP note and return ONLY valid JSON:
 {
   "quality_score": 0-100,
@@ -216,18 +255,16 @@ async def _audit_with_claude_fallback(note: str) -> AuditResponse:
   "consistency_notes": "brief assessment of plan/assessment alignment"
 }"""
 
-    message = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
-        system=audit_prompt,
-        messages=[{"role": "user", "content": f"Audit this SOAP note:\n\n{note}"}],
+    response = openrouter_client.chat.completions.create(
+        model=INFERENCE_MODEL,
+        max_tokens=1024,
+        messages=[
+            {"role": "system", "content": audit_prompt},
+            {"role": "user", "content": f"Audit this SOAP note:\n\n{note}"},
+        ],
     )
 
-    raw = message.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    raw = strip_fences(extract_text(response))
     data = json.loads(raw)
     return AuditResponse(**data)
 

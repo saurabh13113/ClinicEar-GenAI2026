@@ -2,7 +2,6 @@ import os
 import json
 import base64
 import asyncio
-import tempfile
 import io
 import re
 import uuid
@@ -40,19 +39,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Whisper transcription — uses Groq (free) if GROQ_API_KEY is set, else OpenAI
-_groq_key = os.getenv("GROQ_API_KEY")
-_openai_key = os.getenv("OPENAI_API_KEY")
-if _groq_key:
-    WHISPER_MODEL = "whisper-large-v3-turbo"
-    openai_client = openai.OpenAI(
-        api_key=_groq_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
-else:
-    WHISPER_MODEL = "whisper-1"
-    openai_client = openai.OpenAI(api_key=_openai_key)
-
 # SOAP note generation + audit — free hackathon GPT-OSS 120B server
 # Fallback: set OPENROUTER_API_KEY to use OpenRouter instead
 _use_openrouter = bool(os.getenv("OPENROUTER_API_KEY"))
@@ -71,15 +57,6 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
-
-class TranscribeRequest(BaseModel):
-    audio_base64: str
-    filename: str = "audio.webm"
-
-
-class TranscribeResponse(BaseModel):
-    transcript: str
-
 
 class GenerateNoteRequest(BaseModel):
     transcript: str
@@ -475,31 +452,6 @@ def verify_token(token = Depends(security)):
     return user
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
-
-@app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
-    """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
-    try:
-        audio_bytes = base64.b64decode(req.audio_base64)
-        suffix = "." + req.filename.split(".")[-1] if "." in req.filename else ".webm"
-
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-            f.write(audio_bytes)
-            tmp_path = f.name
-
-        with open(tmp_path, "rb") as audio_file:
-            result = openai_client.audio.transcriptions.create(
-                model=WHISPER_MODEL,
-                file=audio_file,
-                response_format="text",
-            )
-
-        os.unlink(tmp_path)
-        return TranscribeResponse(transcript=str(result))
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/generate-note", response_model=SOAPNote)
 async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):

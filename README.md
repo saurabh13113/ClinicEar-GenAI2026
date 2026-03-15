@@ -23,7 +23,7 @@ npm run dev                 # runs on http://localhost:5173
 ```
 
 ## API Keys needed
-- `OPENAI_API_KEY` — for Whisper transcription
+- `ELEVENLABS_API_KEY` — for realtime transcription + speaker diarization
 - `ANTHROPIC_API_KEY` — for Claude SOAP note generation
 - `IBM_WATSONX_API_KEY` + `IBM_WATSONX_PROJECT_ID` — optional, falls back to Claude audit
 

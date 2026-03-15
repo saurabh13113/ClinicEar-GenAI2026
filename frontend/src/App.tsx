@@ -625,8 +625,6 @@ export default function App() {
       timer.stop();
       endingSessionRef.current = true;
       liveStreamingRef.current = false;
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
 
       if (isRecording) {
         const blob = await stopRecording();
@@ -665,37 +663,8 @@ export default function App() {
               setStatus('done');
             }
           } else {
-            setStatus('processing');
-            try {
-              const b64 = await blobToBase64(blob);
-              const res = await fetch(`${API}/transcribe`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`,
-              },
-                body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
-              });
-
-              if (!res.ok) throw new Error('Transcription failed');
-              const { transcript: raw }: { transcript: string } = await res.json();
-
-              const lines: TranscriptLine[] = raw
-                .split(/[.!?]+/)
-                .filter((s) => s.trim().length > 0)
-                .map((s, idx) => ({
-                  id: String(idx),
-                  speaker: idx % 2 === 0 ? 'Doctor' : 'Patient',
-                  text: s.trim(),
-                  timestamp: idx * 3000,
-                }));
-
-              setTranscript(lines);
-              await generateNoteFromTranscript(lines);
-            } catch (err) {
-              setError(err instanceof Error ? err.message : 'Transcription error');
-              setStatus('done');
-            }
+            setError('No live transcript captured from ElevenLabs. Please retry the recording.');
+            setStatus('done');
           }
         }
       } else {

@@ -56,7 +56,7 @@ npm run dev                 # runs on http://localhost:5173
 7. The SOAP note generates automatically on the right panel
 8. Review confidence scores and documentation gaps
 9. The SOAP note is automatically exported to the healthcare record system
-10. Optionally, email the patient summary directly to the patient — before sending, the patient can select their preferred language so the summary is translated into their mother tongue for easier comprehension
+10. Optionally, email the patient summary directly to the patient, with translation available in their language of choice
 
 ## Requirements
 
@@ -134,8 +134,8 @@ create table consultations (
 - **ElevenLabs Scribe v2** — real-time speech-to-text with speaker diarization
 - **Railtracks** — agentic AI orchestration for SOAP note generation pipeline
 - **OpenRouter / Hugging Face** — SOAP note generation and audit fallback
-- **GPT-OSS 120B** — translation and fallback inference
-- **IBM watsonx.ai** — clinical note quality scoring (Llama 3.3 70B Instruct)
+- **OpenAI GPT-OSS 120B** — translation and fallback inference
+- **IBM watsonx.ai** — clinical note quality scoring / audit (Llama 3.3 70B Instruct)
 - **React 18 + TypeScript + Vite** — frontend
 - **Tailwind CSS** — styling
 - **Supabase** — authentication and database

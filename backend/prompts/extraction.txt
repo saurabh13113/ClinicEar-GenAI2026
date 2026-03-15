@@ -17,8 +17,31 @@ Use exactly this structure:
     "assessment": 0.0,
     "plan": 0.0
   },
-  "gaps": ["gap1", "gap2"]
+  "gaps": ["gap1", "gap2"],
+  "patient_instructions": [
+    "Plain-language instruction 1 for the patient (e.g. 'Take furosemide 40 mg every morning with water')",
+    "Plain-language instruction 2 (e.g. 'Weigh yourself each morning before eating and record it')",
+    "Plain-language instruction 3 (e.g. 'Limit salt to less than 2 grams per day')"
+  ],
+  "resource_queries": [
+    "short YouTube search phrase 1 relevant to the diagnosis/treatment (e.g. 'heart failure daily management tips')",
+    "short YouTube search phrase 2 (e.g. 'how to read a medication label')",
+    "short YouTube search phrase 3 (e.g. 'low sodium diet heart failure')"
+  ]
 }
+
+patient_instructions rules:
+- Write 3–6 clear, plain-language bullet instructions a patient can follow at home
+- Cover: medications (name + dose + timing), lifestyle changes, diet, monitoring, activity restrictions
+- Use simple English — no medical jargon
+- Only include instructions explicitly mentioned or clearly implied by the plan
+- Each instruction should be a single, actionable sentence
+
+resource_queries rules:
+- Write 3 concise YouTube/web search phrases (4–7 words each)
+- Each phrase should help the patient find educational videos or articles about their condition or treatment
+- Base them strictly on the diagnosis and plan discussed
+- Do NOT invent URLs — only search phrases
 
 Confidence score rules — read carefully:
 - Score represents how much clinically useful detail was actually present in the transcript for that section

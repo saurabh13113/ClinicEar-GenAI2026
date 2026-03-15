@@ -71,6 +71,8 @@ class SOAPNote(BaseModel):
     icd10_suggestions: list[str]
     confidence_scores: dict[str, float]
     gaps: list[str]
+    patient_instructions: list[str] = []
+    resource_queries: list[str] = []
 
 
 class AuditRequest(BaseModel):
@@ -488,29 +490,6 @@ async def search_patients(q: str, user = Depends(verify_token)):
         print(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
-    """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
-    try:
-        audio_bytes = base64.b64decode(req.audio_base64)
-        suffix = "." + req.filename.split(".")[-1] if "." in req.filename else ".webm"
-
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-            f.write(audio_bytes)
-            tmp_path = f.name
-
-        with open(tmp_path, "rb") as audio_file:
-            result = openai_client.audio.transcriptions.create(
-                model=WHISPER_MODEL,
-                file=audio_file,
-                response_format="text",
-            )
-
-        os.unlink(tmp_path)
-        return TranscribeResponse(transcript=str(result))
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/generate-note", response_model=SOAPNote)

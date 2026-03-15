@@ -831,7 +831,7 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
           {/* Panel content */}
           <div className="flex-1 overflow-hidden">
             {rightTab === 'soap' ? (
-              <SOAPNotePanel note={note} status={status} />
+              <SOAPNotePanel note={note} status={status} patient={patient} />
             ) : (
               <PatientSummaryPanel note={note} status={status} />
             )}

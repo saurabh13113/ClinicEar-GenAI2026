@@ -21,6 +21,8 @@ export interface SOAPNote {
     plan: number;
   };
   gaps: string[];
+  patient_instructions?: string[];
+  resource_queries?: string[];
 }
 
 export interface AuditResult {

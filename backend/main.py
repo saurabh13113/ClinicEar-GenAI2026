@@ -9,7 +9,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-import anthropic
 import openai
 
 load_dotenv()
@@ -26,8 +25,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Primary: hackathon HuggingFace endpoint
+LLM_BASE_URL  = os.getenv("LLM_BASE_URL", "https://qyt7893blb71b5d3.us-east-2.aws.endpoints.huggingface.cloud/v1")
+LLM_API_KEY   = os.getenv("LLM_API_KEY", "dummy")
+MODEL_NAME    = os.getenv("MODEL_NAME", "tgi")
+
+# Backup: OpenRouter (used if OPENROUTER_API_KEY is set and primary fails)
+OPENROUTER_API_KEY   = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL     = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+
+llm_client = openai.OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
+openrouter_client = openai.OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY or "no-key",
+)
+
+# Whisper uses the real OpenAI endpoint if OPENAI_API_KEY is set, otherwise primary endpoint
+_whisper_key = os.getenv("OPENAI_API_KEY")
+whisper_client = openai.OpenAI(api_key=_whisper_key) if _whisper_key else llm_client
+
+
+def chat_with_fallback(messages: list, max_tokens: int = 2048) -> str:
+    """Try primary LLM endpoint, fall back to OpenRouter on failure."""
+    try:
+        response = llm_client.chat.completions.create(
+            model=MODEL_NAME,
+            max_tokens=max_tokens,
+            messages=messages,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as primary_err:
+        if not OPENROUTER_API_KEY:
+            raise primary_err
+        response = openrouter_client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            max_tokens=max_tokens,
+            messages=messages,
+        )
+        return response.choices[0].message.content.strip()
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -109,7 +144,7 @@ async def transcribe(req: TranscribeRequest):
             tmp_path = f.name
 
         with open(tmp_path, "rb") as audio_file:
-            result = openai_client.audio.transcriptions.create(
+            result = whisper_client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 response_format="text",
@@ -126,19 +161,13 @@ async def transcribe(req: TranscribeRequest):
 async def generate_note(req: GenerateNoteRequest):
     """Accepts transcript, returns structured SOAP note via Claude."""
     try:
-        message = anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2048,
-            system=EXTRACTION_SYSTEM_PROMPT,
+        raw = chat_with_fallback(
             messages=[
-                {
-                    "role": "user",
-                    "content": f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}",
-                }
+                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}"},
             ],
+            max_tokens=2048,
         )
-
-        raw = message.content[0].text.strip()
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -207,7 +236,7 @@ SOAP Note:
 
 
 async def _audit_with_claude_fallback(note: str) -> AuditResponse:
-    """Use Claude as fallback auditor when IBM credentials not available."""
+    """Use LLM endpoint as fallback auditor when IBM credentials not available."""
     audit_prompt = """You are a clinical documentation auditor. Audit this SOAP note and return ONLY valid JSON:
 {
   "quality_score": 0-100,
@@ -216,14 +245,13 @@ async def _audit_with_claude_fallback(note: str) -> AuditResponse:
   "consistency_notes": "brief assessment of plan/assessment alignment"
 }"""
 
-    message = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
+    raw = chat_with_fallback(
+        messages=[
+            {"role": "system", "content": audit_prompt},
+            {"role": "user", "content": f"Audit this SOAP note:\n\n{note}"},
+        ],
         max_tokens=512,
-        system=audit_prompt,
-        messages=[{"role": "user", "content": f"Audit this SOAP note:\n\n{note}"}],
     )
-
-    raw = message.content[0].text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

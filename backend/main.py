@@ -9,6 +9,7 @@ import wave
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.parse import urlparse
+from openai import OpenAI
 
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
 try:
@@ -66,6 +67,11 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
+
+class TranslationRequest(BaseModel):
+    text: str
+    target_lang: str
+
 
 class AppointmentEmail(BaseModel):
     patient_email: str
@@ -483,7 +489,7 @@ def verify_token(token = Depends(security)):
 async def recent_consultations(user = Depends(verify_token)):
     try:
         result = supabase.table("consultations")\
-            .select("id, created_at, patient_id, soap, patients(id, first_name, last_name, health_num, dob)")\
+            .select("id, created_at, patient_id, soap, patients(id, first_name, last_name, health_num, dob, preferred_language)")\
             .eq("created_by", user.user.id)\
             .order("created_at", desc=True)\
             .limit(5)\
@@ -496,7 +502,7 @@ async def recent_consultations(user = Depends(verify_token)):
 async def search_patients(q: str, user = Depends(verify_token)):
     try:
         query = supabase.table("patients")\
-            .select("id, health_num, first_name, last_name, dob")
+            .select("id, health_num, first_name, last_name, preferred_language, dob")
 
         if q.isdigit():
             low = int(q) * 10 ** (5 - len(q))
@@ -514,6 +520,21 @@ async def search_patients(q: str, user = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/translate")
+async def translate(data: TranslationRequest):
+    client = OpenAI(
+        api_key=os.getenv("OPENAI_API_KEY", "test"),
+        base_url="https://vjioo4r1vyvcozuj.us-east-2.aws.endpoints.huggingface.cloud/v1",
+    )
+    resp = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": f"You are a medical translator. Translate the user's text to {data.target_lang}. Reply with ONLY the translation, nothing else."},
+            {"role": "user", "content": data.text},
+        ],
+        max_tokens=500,
+    )
+    return {"translated": resp.choices[0].message.content}
 
 @app.post("/generate-note", response_model=SOAPNote)
 async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):

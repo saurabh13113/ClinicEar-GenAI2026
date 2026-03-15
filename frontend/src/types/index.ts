@@ -37,6 +37,7 @@ export interface Patient {
     health_num: number;
     first_name: string;
     last_name: string;
+    preferred_language: string;
     dob: string;
   }
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ClipboardCopy, Check, AlertTriangle, Loader2, FileText, User, Calendar, Hash } from 'lucide-react';
+import { Mail, Check, AlertTriangle, Loader2, FileText, User, Calendar, Hash } from 'lucide-react';
 import type { SOAPNote, SessionStatus, Patient } from '../types';
 import jsPDF from 'jspdf';
 
@@ -79,6 +79,7 @@ export default function SOAPNotePanel({ note, status, patient, showHeader = true
   const [copied, setCopied] = useState(false);
   const email = "wacotoc291@niprack.com";
   const [emailed, setIsEmailed] = useState(false)
+  // const [translatedLang, setTranslatedLang] = useState('');
 
   const handleCopy = async () => {
     if (!note) return;
@@ -88,61 +89,98 @@ export default function SOAPNotePanel({ note, status, patient, showHeader = true
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const generatePDF = (output: 'preview' | 'base64' = 'preview') => {
-    if (!note) return '';
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
+const translateField = async (text: string): Promise<string> => {
+  if (!patient?.preferred_language) return text;
+  const resp = await fetch('http://localhost:8000/api/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, target_lang: patient.preferred_language }),
+  });
+  const data = await resp.json();
+  return data.translated;
+};
 
-    // ── Header ──
-    doc.setFillColor(41, 98, 255);
-    doc.rect(0, 0, pageWidth, 35, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(20);
+const renderPage = (doc: jsPDF, fields: { label: string; content: string }[], isTranslated: boolean) => {
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // ── Header ──
+  doc.setFillColor(41, 98, 255);
+  doc.rect(0, 0, pageWidth, 35, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text('SOAP Note', pageWidth / 2, 20, { align: 'center' });
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  const pageLabel = isTranslated 
+  ? `Translated to ${patient?.preferred_language ?? ''}` 
+  : 'Original (English)';
+  doc.text(pageLabel, pageWidth / 2, 29, { align: 'center' });
+
+  // ── Sections ──
+  let y = 50;
+  doc.setTextColor(30, 30, 30);
+  fields.forEach(({ label, content }) => {
+    doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
-    doc.text('SOAP Note', pageWidth / 2, 20, { align: 'center' });
-    doc.setFontSize(10);
+    doc.setTextColor(41, 98, 255);
+    doc.text(label, 14, y);
+    doc.setDrawColor(41, 98, 255);
+    doc.setLineWidth(0.5);
+    doc.line(14, y + 3, pageWidth - 14, y + 3);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Generated on ${new Date().toLocaleDateString()}`, pageWidth / 2, 29, { align: 'center' });
-
-    // ── Sections ──
-    let y = 50;
+    doc.setFontSize(11);
+    doc.setCharSpace(0);
     doc.setTextColor(30, 30, 30);
-    SECTIONS.forEach(({ label, key }) => {
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(41, 98, 255);
-      doc.text(label, 14, y);
-      doc.setDrawColor(41, 98, 255);
-      doc.setLineWidth(0.5);
-      doc.line(14, y + 3, pageWidth - 14, y + 3);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(11);
-      doc.setCharSpace(0);
-      const split = doc.splitTextToSize(note[key] || 'N/A', pageWidth - 28);
-      doc.text(split, 14, y + 12);
-      y += 12 + split.length * 7 + 10;
-      if (y > 260) {
-        doc.addPage();
-        y = 20;
-      }
-    });
-
-    // ── Footer ──
-    doc.setFontSize(9);
-    doc.setTextColor(150);
-    doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 285);
-
-    // ── Output ──
-    if (output === 'preview') {
-      window.open(doc.output('bloburl'), '_blank');
-      return '';
+    const split = doc.splitTextToSize(content || 'N/A', pageWidth - 28);
+    doc.text(split, 14, y + 12);
+    y += 12 + split.length * 7 + 10;
+    if (y > 260) {
+      doc.addPage();
+      y = 20;
     }
-    return doc.output('datauristring');
-  };
+  });
+
+  // ── Footer ──
+  doc.setFontSize(9);
+  doc.setTextColor(150);
+  doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 285);
+};
+
+  const generatePDF = async (output: 'preview' | 'base64' = 'preview') => {
+  if (!note) return '';
+  const doc = new jsPDF();
+
+  const englishFields = SECTIONS.map(({ label, key }) => ({
+    label,
+    content: note[key] || 'N/A',
+  }));
+
+  // ── If language selected, translated page goes first ──
+if (patient?.preferred_language) { // covers both null and undefined
+  const translatedFields = await Promise.all(
+    SECTIONS.map(async ({ label, key }) => ({
+      label,
+      content: await translateField(note[key] || ''),
+    }))
+  );
+  renderPage(doc, translatedFields, true);
+  doc.addPage();
+}
+
+  // ── English page ──
+  renderPage(doc, englishFields, false);
+
+  if (output === 'preview') {
+    window.open(doc.output('bloburl'), '_blank');
+    return '';
+  }
+  return doc.output('datauristring');
+};
 
   const handleEmail = async () => {
     if (!note || !email) return;
-    const pdfBase64 = generatePDF('base64') as string;
+    const pdfBase64 = await generatePDF('base64');
     const base64Content = pdfBase64.replace(/^data:.+;base64,/, '');
     await fetch('http://localhost:8000/api/send-appointment-summary', {
       method: 'POST',
@@ -156,45 +194,30 @@ export default function SOAPNotePanel({ note, status, patient, showHeader = true
     setTimeout(() => setIsEmailed(false), 2000);
   };
 
+  
+
   return (
     <div className="flex flex-col h-full" style={{ background: '#060D1B' }}>
 
       {/* ── Panel header ── */}
-      {showHeader && (
-        <div
-          className="flex items-center justify-between px-6 py-3.5 shrink-0"
-          style={{ background: '#091422', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-        >
-          <div className="flex items-center gap-2.5">
-            <FileText className="w-4 h-4" style={{ color: '#3B82F6' }} />
-            <span className="text-sm font-bold tracking-wide" style={{ color: '#CBD5E1', letterSpacing: '0.04em' }}>
-              CLINICAL NOTE
-            </span>
-            {note && (
-              <span
-                className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider"
-                style={{ background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }}
-              >
-                Finalized
-              </span>
-            )}
-          </div>
-          {note && (
-            <button
-              onClick={handleEmail} // was handleCopy, changed to generatePDF
+      <div
+      >
+        {note && (
+          <div className="flex items-center gap-3">
+            {/* <select
+              value={translatedLang}
+              onChange={(e) => setTranslatedLang(e.target.value)}
               className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150"
-              style={
-                emailed
-                  ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }
-                  : { background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }
-              }
+              style={{ background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }}
             >
-              {emailed ? <Check className="w-3.5 h-3.5" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
-              {emailed ? 'Copied!' : 'Copy Note'}
-            </button>
-          )}
-        </div>
-      )}
+                <option value="" disabled>Select Language</option>
+                <option value="French">French</option>
+                <option value="Spanish">Spanish</option>
+                <option value="Italian">Italian</option>
+            </select> */}
+          </div>
+        )}
+      </div>
 
       {/* ── Scrollable body ── */}
       <div className="flex-1 overflow-y-auto">
@@ -210,12 +233,27 @@ export default function SOAPNotePanel({ note, status, patient, showHeader = true
               className="flex items-center justify-between px-4 py-2.5"
               style={{ background: 'rgba(29,78,216,0.1)', borderBottom: '1px solid rgba(29,78,216,0.18)' }}
             >
-              <span
+              <div className="flex items-center gap-3">
+                <span
                 className="text-[10px] font-bold uppercase tracking-widest"
                 style={{ color: '#3B82F6' }}
               >
                 Patient Chart — SOAP Documentation
               </span>
+                        <button
+            onClick={handleEmail} // was handleCopy, changed to generatePDF
+            className="flex items-center gap-1 ml-auto text-[10px] font-semibold px-2 py-1 rounded tracking-wide"
+            style={
+              emailed
+                ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }
+                : { background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }
+            }
+          >
+            {emailed ? <Check className="w-3.5 h-3.5" /> : <Mail className="w-3.5 h-3.5" />}
+            {emailed ? 'Emailed!' : 'Email Note'}
+          </button>
+              </div>
+              
               <span className="text-[10px]" style={{ color: '#1E3A5A' }}>{todayStr()}</span>
             </div>
 

@@ -71,6 +71,8 @@ class SOAPNote(BaseModel):
     icd10_suggestions: list[str]
     confidence_scores: dict[str, float]
     gaps: list[str]
+    patient_instructions: list[str] = []
+    resource_queries: list[str] = []
 
 
 class AuditRequest(BaseModel):

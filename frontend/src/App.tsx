@@ -745,7 +745,13 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className={`app-theme-shell ${theme === 'light' ? 'theme-light' : 'theme-dark'} flex flex-col h-screen`} style={{ background: '#050C1A', fontFamily: 'Sora, sans-serif' }}>
+    <div
+      className={`app-theme-shell ${theme === 'light' ? 'theme-light' : 'theme-dark'} flex flex-col h-screen`}
+      style={{
+        background: theme === 'light' ? '#F3F7FD' : '#050C1A',
+        fontFamily: 'Sora, sans-serif',
+      }}
+    >
       <ControlBar
         status={status}
         timerFormatted={timer.formatted}
@@ -792,7 +798,10 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
       {/* Main panels */}
       <div
         className="flex flex-1 overflow-hidden"
-        style={{ gap: '1px', background: 'rgba(255,255,255,0.04)' }}
+        style={{
+          gap: '1px',
+          background: theme === 'light' ? 'rgba(148,163,184,0.35)' : 'rgba(255,255,255,0.08)',
+        }}
       >
         {/* Left: Transcript */}
         <div className="w-[44%] flex flex-col overflow-hidden">
@@ -851,7 +860,7 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
           {/* Panel content */}
           <div className="flex-1 overflow-hidden">
             {rightTab === 'soap' ? (
-              <SOAPNotePanel note={note} status={status} patient={patient} />
+              <SOAPNotePanel note={note} status={status} patient={patient} showHeader={false} />
             ) : (
               <PatientSummaryPanel note={note} status={status} />
             )}

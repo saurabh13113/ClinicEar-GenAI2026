@@ -25,28 +25,6 @@ export default function PatientSummaryPanel({ note, status }: PatientSummaryPane
   return (
     <div className="flex flex-col h-full tab-panel-enter" style={{ background: '#070D1C' }}>
 
-      {/* ── Header ── */}
-      <div
-        className="flex items-center justify-between px-5 py-3 shrink-0"
-        style={{ background: '#091422', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-      >
-        <div className="flex items-center gap-2.5">
-          <FileHeart className="w-4 h-4" style={{ color: '#F472B6' }} />
-          <span className="text-sm font-bold tracking-wide" style={{ color: '#CBD5E1', letterSpacing: '0.04em' }}>
-            PATIENT SUMMARY
-          </span>
-          {note && (
-            <span
-              className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider"
-              style={{ background: 'rgba(244,114,182,0.1)', color: '#F9A8D4', border: '1px solid rgba(244,114,182,0.2)' }}
-            >
-              Ready
-            </span>
-          )}
-        </div>
-        <span className="text-[10px]" style={{ color: '#1E3A5A' }}>Plain-language take-home</span>
-      </div>
-
       {/* ── Scrollable content ── */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
 

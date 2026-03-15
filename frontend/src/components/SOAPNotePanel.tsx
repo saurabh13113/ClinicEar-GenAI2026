@@ -7,6 +7,7 @@ interface SOAPNotePanelProps {
   note: SOAPNote | null;
   status: SessionStatus;
   patient?: Patient;
+  showHeader?: boolean;
 }
 
 const SECTIONS = [
@@ -74,7 +75,7 @@ function todayStr() {
   return new Date().toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
-export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelProps) {
+export default function SOAPNotePanel({ note, status, patient, showHeader = true }: SOAPNotePanelProps) {
   const [copied, setCopied] = useState(false);
   const email = "wacotoc291@niprack.com";
   const [emailed, setIsEmailed] = useState(false)
@@ -159,39 +160,41 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
     <div className="flex flex-col h-full" style={{ background: '#060D1B' }}>
 
       {/* ── Panel header ── */}
-      <div
-        className="flex items-center justify-between px-5 py-3 shrink-0"
-        style={{ background: '#091422', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-      >
-        <div className="flex items-center gap-2.5">
-          <FileText className="w-4 h-4" style={{ color: '#3B82F6' }} />
-          <span className="text-sm font-bold tracking-wide" style={{ color: '#CBD5E1', letterSpacing: '0.04em' }}>
-            CLINICAL NOTE
-          </span>
-          {note && (
-            <span
-              className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider"
-              style={{ background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }}
-            >
-              Finalized
+      {showHeader && (
+        <div
+          className="flex items-center justify-between px-6 py-3.5 shrink-0"
+          style={{ background: '#091422', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          <div className="flex items-center gap-2.5">
+            <FileText className="w-4 h-4" style={{ color: '#3B82F6' }} />
+            <span className="text-sm font-bold tracking-wide" style={{ color: '#CBD5E1', letterSpacing: '0.04em' }}>
+              CLINICAL NOTE
             </span>
+            {note && (
+              <span
+                className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider"
+                style={{ background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }}
+              >
+                Finalized
+              </span>
+            )}
+          </div>
+          {note && (
+            <button
+              onClick={handleEmail} // was handleCopy, changed to generatePDF
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150"
+              style={
+                emailed
+                  ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }
+                  : { background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }
+              }
+            >
+              {emailed ? <Check className="w-3.5 h-3.5" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
+              {emailed ? 'Copied!' : 'Copy Note'}
+            </button>
           )}
         </div>
-        {note && (
-          <button
-            onClick={handleEmail} // was handleCopy, changed to generatePDF
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150"
-            style={
-              emailed
-                ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }
-                : { background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }
-            }
-          >
-            {emailed ? <Check className="w-3.5 h-3.5" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
-            {emailed ? 'Copied!' : 'Copy Note'}
-          </button>
-        )}
-      </div>
+      )}
 
       {/* ── Scrollable body ── */}
       <div className="flex-1 overflow-y-auto">
@@ -199,7 +202,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
         {/* ── Patient chart header (when note is present) ── */}
         {note && (
           <div
-            className="mx-4 mt-4 rounded-xl overflow-hidden"
+            className="mx-5 mt-5 rounded-xl overflow-hidden"
             style={{ border: '1px solid rgba(255,255,255,0.08)', background: '#0A1628' }}
           >
             {/* Chart title bar */}
@@ -218,7 +221,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
 
             {/* Patient info grid */}
             <div className="grid grid-cols-3 divide-x" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-              <div className="flex items-center gap-2 px-3.5 py-3">
+              <div className="flex items-center gap-2.5 px-4 py-3.5">
                 <User className="w-3.5 h-3.5 shrink-0" style={{ color: '#2E4A66' }} />
                 <div>
                   <div className="text-[9px] uppercase tracking-wider mb-0.5" style={{ color: '#1E3A5A' }}>Patient</div>
@@ -227,7 +230,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 px-3.5 py-3">
+              <div className="flex items-center gap-2.5 px-4 py-3.5">
                 <Calendar className="w-3.5 h-3.5 shrink-0" style={{ color: '#2E4A66' }} />
                 <div>
                   <div className="text-[9px] uppercase tracking-wider mb-0.5" style={{ color: '#1E3A5A' }}>Date of Birth</div>
@@ -236,7 +239,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 px-3.5 py-3">
+              <div className="flex items-center gap-2.5 px-4 py-3.5">
                 <Hash className="w-3.5 h-3.5 shrink-0" style={{ color: '#2E4A66' }} />
                 <div>
                   <div className="text-[9px] uppercase tracking-wider mb-0.5" style={{ color: '#1E3A5A' }}>Health Number</div>
@@ -251,7 +254,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
 
         {/* ── Empty / processing states ── */}
         {!note && status === 'idle' && (
-          <div className="flex flex-col items-center justify-center gap-5 py-24 text-center px-8">
+          <div className="flex flex-col items-center justify-center h-full gap-5 text-center px-8">
             <div
               className="w-14 h-14 rounded-xl flex items-center justify-center"
               style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
@@ -266,7 +269,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
         )}
 
         {!note && status === 'recording' && (
-          <div className="flex flex-col items-center justify-center gap-5 py-24 text-center px-8">
+          <div className="flex flex-col items-center justify-center h-full gap-5 text-center px-8">
             <div
               className="w-14 h-14 rounded-xl flex items-center justify-center"
               style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
@@ -310,7 +313,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
 
         {/* ── SOAP sections ── */}
         {note && (
-          <div className="px-4 pt-3 pb-4 space-y-0">
+          <div className="px-5 pt-4 pb-6 space-y-1">
             {SECTIONS.map((s, idx) => {
               const conf = note.confidence_scores?.[s.key] ?? 1.0;
               const isLow = conf < 0.7;
@@ -325,14 +328,14 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
                     style={{
                       borderLeft: `3px solid ${isLow ? '#D97706' : s.borderLeft}`,
                       background: isLow ? 'rgba(217,119,6,0.04)' : s.bgColor,
-                      paddingLeft: '14px',
-                      paddingRight: '16px',
-                      paddingTop: '14px',
-                      paddingBottom: '14px',
+                      paddingLeft: '16px',
+                      paddingRight: '18px',
+                      paddingTop: '16px',
+                      paddingBottom: '16px',
                     }}
                   >
                     {/* Section label row */}
-                    <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center justify-between mb-3.5">
                       <div className="flex items-center gap-2.5">
                         <span
                           className="text-[11px] font-black rounded px-1.5 py-0.5"
@@ -373,7 +376,7 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
                     </div>
 
                     {/* Section body */}
-                    <p className="clinical-text" style={{ paddingLeft: '2px' }}>
+                    <p className="clinical-text" style={{ paddingLeft: '2px', paddingBottom: '2px' }}>
                       {note[s.key] || '—'}
                     </p>
                   </div>
@@ -386,12 +389,12 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
               <div
                 style={{
                   borderTop: '1px solid rgba(255,255,255,0.05)',
-                  paddingTop: '12px',
-                  paddingBottom: '2px',
-                  marginTop: '4px',
+                  paddingTop: '16px',
+                  paddingBottom: '6px',
+                  marginTop: '10px',
                 }}
               >
-                <div className="flex items-center gap-2 mb-2.5">
+                <div className="flex items-center gap-2 mb-3">
                   <span
                     className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"
                     style={{ background: 'rgba(255,255,255,0.06)', color: '#3B82F6', fontFamily: 'JetBrains Mono, monospace' }}
@@ -418,15 +421,15 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
             {note.gaps.length > 0 && (
               <div
                 className="rounded-xl mt-3 note-section"
-                style={{ background: 'rgba(217,119,6,0.05)', border: '1px solid rgba(217,119,6,0.18)', padding: '12px 14px' }}
+                style={{ background: 'rgba(217,119,6,0.05)', border: '1px solid rgba(217,119,6,0.18)', padding: '14px 16px' }}
               >
-                <div className="flex items-center gap-2 mb-2.5">
+                <div className="flex items-center gap-2 mb-3">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#F59E0B' }}>
                     Documentation Gaps
                   </span>
                 </div>
-                <ul className="space-y-1.5">
+                <ul className="space-y-2">
                   {note.gaps.map((gap, i) => (
                     <li key={i} className="text-xs flex items-start gap-2" style={{ color: '#92660B' }}>
                       <span className="mt-1.5 w-1 h-1 rounded-full bg-amber-500 shrink-0" />

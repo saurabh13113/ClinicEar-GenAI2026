@@ -51,7 +51,7 @@ export default function AuditPanel({ audit, isLoading }: AuditPanelProps) {
       >
         <ShieldCheck className="w-3 h-3" style={{ color: '#2E4A66' }} />
         <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#2E4A66' }}>
-          IBM watsonx.ai — Quality Audit
+          Quality Audit
         </span>
       </div>
 

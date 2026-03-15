@@ -42,10 +42,11 @@ export default function TranscriptPanel({ lines, status }: TranscriptPanelProps)
     <div className="flex flex-col h-full" style={{ background: '#07101E' }}>
       {/* Header */}
       <div
-        className="flex items-center justify-between px-5 py-3.5 shrink-0"
+        className="flex items-center justify-between px-5 shrink-0"
         style={{
           background: '#0A1628',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
+          height: '44px',
         }}
       >
         <div className="flex items-center gap-2.5">
@@ -80,11 +81,11 @@ export default function TranscriptPanel({ lines, status }: TranscriptPanelProps)
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+      <div className={`flex-1 ${lines.length === 0 ? 'overflow-y-hidden' : 'overflow-y-auto'} px-5 py-5 space-y-4`}>
 
         {/* Empty state */}
         {lines.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-5 py-20 text-center">
+          <div className="flex flex-col items-center justify-center h-full gap-5 text-center">
             {status === 'idle' ? (
               <>
                 <div

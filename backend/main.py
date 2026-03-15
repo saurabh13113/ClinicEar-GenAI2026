@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 import openai
 import httpx
 import websockets
+import resend
 from websockets.exceptions import ConnectionClosed
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -65,6 +66,20 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
+
+class AppointmentEmail(BaseModel):
+    patient_email: str
+    pdf_base64: str
+
+
+class TranscribeRequest(BaseModel):
+    audio_base64: str
+    filename: str = "audio.webm"
+
+
+class TranscribeResponse(BaseModel):
+    transcript: str
+
 
 class GenerateNoteRequest(BaseModel):
     transcript: str
@@ -746,6 +761,23 @@ async def reconcile_speakers(req: ReconcileSpeakersRequest, user = Depends(verif
         )
 
     return ReconcileSpeakersResponse(segments=reconciled)
+
+@app.post("/api/send-appointment-summary")
+async def send_appointment_summary(data: AppointmentEmail):
+    resend.api_key = os.environ["RESEND_API_KEY"]
+    resend.Emails.send({
+        "from": "onboarding@resend.dev",
+        "to": 'fares.alkorani289@gmail.com',
+        "subject": "Your SOAP Note Summary",
+        "html": "<p>Please find your appointment SOAP note attached.</p>",
+        "attachments": [
+            {
+                "filename": "soap-note.pdf",
+                "content": data.pdf_base64,
+            }
+        ]
+    })
+    return {"success": True}
 
 # ── WebSocket: client ↔ ElevenLabs realtime transcription proxy ─────────────
 

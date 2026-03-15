@@ -9,6 +9,16 @@ import PreSession from './components/PreSession';
 import { Patient } from './types';
 import './index.css';
 
+const THEME_STORAGE_KEY = 'theme';
+
+function getBootTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'light';
+  const stored = (window.localStorage.getItem(THEME_STORAGE_KEY) || '').trim().toLowerCase();
+  if (stored === 'dark') return 'dark';
+  window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+  return 'light';
+}
+
 function Root() {
     const [session, setSession] = useState<Session | null>(null);
     const [loading, setLoading] = useState(true);
@@ -16,6 +26,10 @@ function Root() {
     const [mode, setMode] = useState<'live' | 'demo' | null>(null);
   
     useEffect(() => {
+      if (typeof document !== 'undefined') {
+        document.documentElement.dataset.theme = getBootTheme();
+      }
+
       supabase.auth.getSession().then(({ data }) => {
         setSession(data.session);
         setLoading(false);

@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
 
 type AuthMode = 'login' | 'signup';
 
 export default function Auth() {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'light';
+    return window.localStorage.getItem('theme') === 'dark' ? 'dark' : 'light';
+  });
   const [mode, setMode]         = useState<AuthMode>('login');
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
@@ -38,11 +42,62 @@ export default function Auth() {
     if (e.key === 'Enter') handleSubmit();
   };
 
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme = theme;
+    }
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('theme', theme);
+    }
+  }, [theme]);
+
+  const palette = theme === 'dark'
+    ? {
+        pageBg: '#050C1A',
+        gridLine: 'rgba(29,78,216,0.03)',
+        glow: 'radial-gradient(ellipse, rgba(29,78,216,0.08) 0%, transparent 70%)',
+        cardBg: '#0A1628',
+        cardBorder: 'rgba(255,255,255,0.06)',
+        cardShadow: '0 24px 64px rgba(0,0,0,0.4)',
+        title: '#E8F0FF',
+        muted: '#2E4A66',
+        trackBg: 'rgba(255,255,255,0.03)',
+        trackBorder: 'rgba(255,255,255,0.06)',
+        inputBg: 'rgba(255,255,255,0.03)',
+        inputBorder: 'rgba(255,255,255,0.08)',
+        inputText: '#E8F0FF',
+        submitBg: 'rgba(29,78,216,0.25)',
+        submitDisabledBg: 'rgba(29,78,216,0.15)',
+        submitText: '#93BBFF',
+        submitDisabledText: '#2E4A66',
+        footnote: '#1A2E44',
+      }
+    : {
+        pageBg: '#F3F7FD',
+        gridLine: 'rgba(59,130,246,0.08)',
+        glow: 'radial-gradient(ellipse, rgba(37,99,235,0.16) 0%, transparent 72%)',
+        cardBg: '#FFFFFF',
+        cardBorder: 'rgba(148,163,184,0.28)',
+        cardShadow: '0 22px 56px rgba(30,64,175,0.16)',
+        title: '#0F172A',
+        muted: '#64748B',
+        trackBg: '#F1F5F9',
+        trackBorder: 'rgba(148,163,184,0.32)',
+        inputBg: '#FFFFFF',
+        inputBorder: 'rgba(148,163,184,0.45)',
+        inputText: '#0F172A',
+        submitBg: '#DBEAFE',
+        submitDisabledBg: '#E2E8F0',
+        submitText: '#1D4ED8',
+        submitDisabledText: '#94A3B8',
+        footnote: '#94A3B8',
+      };
+
   return (
     <div
       style={{
         minHeight: '100svh',
-        background: '#050C1A',
+        background: palette.pageBg,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -56,8 +111,8 @@ export default function Auth() {
           position: 'fixed',
           inset: 0,
           backgroundImage: `
-            linear-gradient(rgba(29,78,216,0.03) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(29,78,216,0.03) 1px, transparent 1px)
+            linear-gradient(${palette.gridLine} 1px, transparent 1px),
+            linear-gradient(90deg, ${palette.gridLine} 1px, transparent 1px)
           `,
           backgroundSize: '48px 48px',
           pointerEvents: 'none',
@@ -73,7 +128,7 @@ export default function Auth() {
           transform: 'translateX(-50%)',
           width: '600px',
           height: '300px',
-          background: 'radial-gradient(ellipse, rgba(29,78,216,0.08) 0%, transparent 70%)',
+          background: palette.glow,
           pointerEvents: 'none',
         }}
       />
@@ -83,11 +138,11 @@ export default function Auth() {
           position: 'relative',
           width: '100%',
           maxWidth: '400px',
-          background: '#0A1628',
-          border: '1px solid rgba(255,255,255,0.06)',
+          background: palette.cardBg,
+          border: `1px solid ${palette.cardBorder}`,
           borderRadius: '16px',
           padding: '40px',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.4)',
+          boxShadow: palette.cardShadow,
         }}
       >
         {/* Logo / wordmark */}
@@ -114,14 +169,14 @@ export default function Auth() {
               style={{
                 fontSize: '18px',
                 fontWeight: 700,
-                color: '#E8F0FF',
+                color: palette.title,
                 letterSpacing: '-0.4px',
               }}
             >
-              ClinicalEar
+              ClinicEar
             </span>
           </div>
-          <p style={{ fontSize: '12px', color: '#2E4A66', margin: 0 }}>
+          <p style={{ fontSize: '12px', color: palette.muted, margin: 0 }}>
             AI Clinical Documentation
           </p>
         </div>
@@ -130,8 +185,8 @@ export default function Auth() {
         <div
           style={{
             display: 'flex',
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.06)',
+            background: palette.trackBg,
+            border: `1px solid ${palette.trackBorder}`,
             borderRadius: '8px',
             padding: '3px',
             marginBottom: '28px',
@@ -152,7 +207,7 @@ export default function Auth() {
                 fontFamily: 'Sora, sans-serif',
                 transition: 'all 0.15s',
                 background: mode === m ? 'rgba(29,78,216,0.2)' : 'transparent',
-                color: mode === m ? '#93BBFF' : '#2E4A66',
+                color: mode === m ? '#1D4ED8' : palette.muted,
               }}
             >
               {m === 'login' ? 'Sign In' : 'Sign Up'}
@@ -168,7 +223,7 @@ export default function Auth() {
                 display: 'block',
                 fontSize: '11px',
                 fontWeight: 600,
-                color: '#2E4A66',
+                color: palette.muted,
                 marginBottom: '6px',
                 textTransform: 'uppercase',
                 letterSpacing: '0.6px',
@@ -185,10 +240,10 @@ export default function Auth() {
               style={{
                 width: '100%',
                 padding: '10px 12px',
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: palette.inputBg,
+                border: `1px solid ${palette.inputBorder}`,
                 borderRadius: '8px',
-                color: '#E8F0FF',
+                color: palette.inputText,
                 fontSize: '13px',
                 fontFamily: 'Sora, sans-serif',
                 outline: 'none',
@@ -196,7 +251,7 @@ export default function Auth() {
                 transition: 'border-color 0.15s',
               }}
               onFocus={(e) => (e.target.style.borderColor = 'rgba(29,78,216,0.5)')}
-              onBlur={(e) => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
+              onBlur={(e) => (e.target.style.borderColor = palette.inputBorder)}
             />
           </div>
 
@@ -206,7 +261,7 @@ export default function Auth() {
                 display: 'block',
                 fontSize: '11px',
                 fontWeight: 600,
-                color: '#2E4A66',
+                color: palette.muted,
                 marginBottom: '6px',
                 textTransform: 'uppercase',
                 letterSpacing: '0.6px',
@@ -223,10 +278,10 @@ export default function Auth() {
               style={{
                 width: '100%',
                 padding: '10px 12px',
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: palette.inputBg,
+                border: `1px solid ${palette.inputBorder}`,
                 borderRadius: '8px',
-                color: '#E8F0FF',
+                color: palette.inputText,
                 fontSize: '13px',
                 fontFamily: 'Sora, sans-serif',
                 outline: 'none',
@@ -234,7 +289,7 @@ export default function Auth() {
                 transition: 'border-color 0.15s',
               }}
               onFocus={(e) => (e.target.style.borderColor = 'rgba(29,78,216,0.5)')}
-              onBlur={(e) => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}
+              onBlur={(e) => (e.target.style.borderColor = palette.inputBorder)}
             />
           </div>
         </div>
@@ -288,11 +343,11 @@ export default function Auth() {
             width: '100%',
             padding: '11px',
             background: loading || !email || !password
-              ? 'rgba(29,78,216,0.15)'
-              : 'rgba(29,78,216,0.25)',
+              ? palette.submitDisabledBg
+              : palette.submitBg,
             border: '1px solid rgba(29,78,216,0.35)',
             borderRadius: '8px',
-            color: loading || !email || !password ? '#2E4A66' : '#93BBFF',
+            color: loading || !email || !password ? palette.submitDisabledText : palette.submitText,
             fontSize: '13px',
             fontWeight: 600,
             fontFamily: 'Sora, sans-serif',
@@ -310,7 +365,7 @@ export default function Auth() {
           style={{
             marginTop: '20px',
             fontSize: '10px',
-            color: '#1A2E44',
+            color: palette.footnote,
             textAlign: 'center',
             lineHeight: '1.5',
           }}

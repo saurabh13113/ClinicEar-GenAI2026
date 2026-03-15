@@ -1,4 +1,4 @@
-import { Mic, MicOff, Play, Loader2, RotateCcw, Timer } from 'lucide-react';
+import { Mic, MicOff, Play, Loader2, RotateCcw, Timer, Moon, Sun } from 'lucide-react';
 import type { SessionStatus, Patient } from '../types';
 import { supabase } from '../supabase';
 
@@ -12,6 +12,8 @@ interface ControlBarProps {
   onReset: () => void;
   onEndSession: () => void;
   patient: Patient;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }
 
 export default function ControlBar({
@@ -24,6 +26,8 @@ export default function ControlBar({
   onReset,
   onEndSession,
   patient,
+  theme,
+  onToggleTheme,
 }: ControlBarProps) {
   const isRecording  = status === 'recording';
   const isProcessing = status === 'processing';
@@ -49,22 +53,31 @@ export default function ControlBar({
         {/* ── Logo ── */}
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-xl overflow-hidden shrink-0"
+            className="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center"
             style={{
               boxShadow: isRecording
                 ? '0 0 0 2px rgba(239,68,68,0.5), 0 0 12px rgba(239,68,68,0.2)'
                 : '0 0 0 1px rgba(255,255,255,0.08)',
               transition: 'box-shadow 0.4s ease',
+              background: 'rgba(29,78,216,0.08)',
             }}
           >
-            <img src="/logo.jpg" alt="ClinicalEar" className="w-full h-full object-cover" />
+            <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
+              <polyline
+                points="1,11 5,11 7,4 9,18 11,9 13,14 15,11 21,11"
+                stroke="#1d4ed8"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </div>
           <div className="leading-tight">
             <div
               className="text-[15px] font-bold tracking-tight"
               style={{ color: '#E2E8F0', fontFamily: 'Sora, sans-serif' }}
             >
-              ClinicalEar
+              ClinicEar
             </div>
             <div className="text-[10px] font-medium" style={{ color: '#1E3A5A' }}>
               AI Clinical Note Generator
@@ -224,6 +237,30 @@ export default function ControlBar({
             className="ml-2 pl-3 flex items-center gap-1.5"
             style={{ borderLeft: '1px solid rgba(255,255,255,0.07)' }}
           >
+            <button
+              onClick={onToggleTheme}
+              className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-full transition-all duration-150"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                color: '#2E4A66',
+                border: '1px solid rgba(255,255,255,0.07)',
+                cursor: 'pointer',
+                fontFamily: 'Sora, sans-serif',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(59,130,246,0.1)';
+                e.currentTarget.style.color = '#93BBFF';
+                e.currentTarget.style.borderColor = 'rgba(59,130,246,0.25)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.color = '#2E4A66';
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)';
+              }}
+            >
+              {theme === 'light' ? <Moon className="w-3 h-3" /> : <Sun className="w-3 h-3" />}
+              {theme === 'light' ? 'Dark mode' : 'Light mode'}
+            </button>
             <button
             onClick={() => supabase.auth.signOut()}
             className="text-[10px] font-bold px-2 py-1 rounded-full transition-all duration-150"

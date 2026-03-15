@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase';
 import { Patient } from '../types';
-import { Search, User, Calendar, Hash, Mic, Play, ArrowLeft, Clock, ChevronRight, Plus } from 'lucide-react';
+import { Search, User, Calendar, Hash, Mic, Play, ArrowLeft, Clock, Plus, Moon, Sun } from 'lucide-react';
 
 export interface PreSessionProps {
   onStart: (mode: 'live' | 'demo', patient: Patient) => void;
@@ -33,6 +33,10 @@ function timeAgo(iso: string) {
 }
 
 export default function PreSession({ onStart }: PreSessionProps) {
+  const [theme, setTheme]                     = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'light';
+    return window.localStorage.getItem('theme') === 'dark' ? 'dark' : 'light';
+  });
   const [query, setQuery]                       = useState('');
   const [results, setResults]                   = useState<Patient[]>([]);
   const [selectedPatient, setSelectedPatient]   = useState<Patient | null>(null);
@@ -99,13 +103,106 @@ export default function PreSession({ onStart }: PreSessionProps) {
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme = theme;
+    }
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('theme', theme);
+    }
+  }, [theme]);
+
+  const palette = theme === 'dark'
+    ? {
+        pageBg: '#050C1A',
+        topBg: '#091422',
+        topBorder: 'rgba(255,255,255,0.06)',
+        title: '#E8F0FF',
+        muted: '#2E4A66',
+        subtle: '#1E3A5A',
+        cardBg: '#0A1628',
+        cardBorder: 'rgba(255,255,255,0.09)',
+        softBorder: 'rgba(255,255,255,0.05)',
+        inputText: '#E8F0FF',
+        rowText: '#CBD5E1',
+        rowSubtle: '#1E3A5A',
+        hoverRow: 'rgba(29,78,216,0.12)',
+      }
+    : {
+        pageBg: '#F3F7FD',
+        topBg: '#FFFFFF',
+        topBorder: 'rgba(148,163,184,0.32)',
+        title: '#0F172A',
+        muted: '#64748B',
+        subtle: '#94A3B8',
+        cardBg: '#FFFFFF',
+        cardBorder: 'rgba(148,163,184,0.4)',
+        softBorder: 'rgba(148,163,184,0.22)',
+        inputText: '#0F172A',
+        rowText: '#0F172A',
+        rowSubtle: '#64748B',
+        hoverRow: 'rgba(29,78,216,0.08)',
+      };
+
+  const sessionStyles = theme === 'dark'
+    ? {
+        live: {
+          bg: 'rgba(29,78,216,0.18)',
+          hoverBg: 'rgba(29,78,216,0.26)',
+          border: 'rgba(29,78,216,0.35)',
+          hoverBorder: 'rgba(29,78,216,0.5)',
+          iconBg: 'rgba(29,78,216,0.25)',
+          iconBorder: 'rgba(29,78,216,0.4)',
+          iconColor: '#93BBFF',
+          titleColor: '#93BBFF',
+          descColor: palette.muted,
+        },
+        demo: {
+          bg: 'rgba(139,92,246,0.1)',
+          hoverBg: 'rgba(139,92,246,0.18)',
+          border: 'rgba(139,92,246,0.25)',
+          hoverBorder: 'rgba(139,92,246,0.4)',
+          iconBg: 'rgba(139,92,246,0.15)',
+          iconBorder: 'rgba(139,92,246,0.3)',
+          iconColor: '#C4B5FD',
+          titleColor: '#C4B5FD',
+          descColor: palette.muted,
+        },
+      }
+    : {
+        live: {
+          bg: '#EAF2FF',
+          hoverBg: '#DCEBFF',
+          border: 'rgba(59,130,246,0.45)',
+          hoverBorder: 'rgba(37,99,235,0.62)',
+          iconBg: '#D6E7FF',
+          iconBorder: 'rgba(59,130,246,0.5)',
+          iconColor: '#1D4ED8',
+          titleColor: '#1E40AF',
+          descColor: '#334155',
+        },
+        demo: {
+          bg: '#F2ECFF',
+          hoverBg: '#E9DEFF',
+          border: 'rgba(139,92,246,0.42)',
+          hoverBorder: 'rgba(124,58,237,0.58)',
+          iconBg: '#E7DBFF',
+          iconBorder: 'rgba(139,92,246,0.45)',
+          iconColor: '#6D28D9',
+          titleColor: '#6D28D9',
+          descColor: '#334155',
+        },
+      };
+
+  const toggleTheme = () => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+
   return (
-    <div style={{ minHeight: '100svh', background: '#050C1A', fontFamily: 'Sora, sans-serif', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100svh', background: palette.pageBg, fontFamily: 'Sora, sans-serif', display: 'flex', flexDirection: 'column' }}>
 
       {/* ── Top bar ── */}
       <div style={{
-        height: '48px', background: '#091422',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        height: '48px', background: palette.topBg,
+        borderBottom: `1px solid ${palette.topBorder}`,
         display: 'flex', alignItems: 'center',
         padding: '0 20px', justifyContent: 'space-between',
       }}>
@@ -114,20 +211,36 @@ export default function PreSession({ onStart }: PreSessionProps) {
             <polyline points="1,11 5,11 7,4 9,18 11,9 13,14 15,11 21,11"
               stroke="#1d4ed8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span style={{ fontSize: '13px', fontWeight: 700, color: '#E8F0FF', letterSpacing: '-0.3px' }}>ClinicalEar</span>
+          <span style={{ fontSize: '13px', fontWeight: 700, color: palette.title, letterSpacing: '-0.3px' }}>ClinicEar</span>
         </div>
-        <button
-          onClick={() => supabase.auth.signOut()}
-          style={{
-            background: 'transparent', border: '1px solid rgba(255,255,255,0.07)',
-            borderRadius: '6px', color: '#2E4A66', fontSize: '11px',
-            fontWeight: 600, fontFamily: 'Sora, sans-serif', padding: '4px 10px', cursor: 'pointer',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#FCA5A5'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.2)'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = '#2E4A66'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.background = 'transparent'; }}
-        >
-          Sign Out
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            onClick={toggleTheme}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              background: 'transparent', border: `1px solid ${palette.topBorder}`,
+              borderRadius: '6px', color: palette.muted, fontSize: '11px',
+              fontWeight: 600, fontFamily: 'Sora, sans-serif', padding: '4px 10px', cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#1D4ED8'; e.currentTarget.style.borderColor = 'rgba(29,78,216,0.25)'; e.currentTarget.style.background = 'rgba(29,78,216,0.08)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = palette.muted; e.currentTarget.style.borderColor = palette.topBorder; e.currentTarget.style.background = 'transparent'; }}
+          >
+            {theme === 'light' ? <Moon size={12} /> : <Sun size={12} />}
+            {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+          </button>
+          <button
+            onClick={() => supabase.auth.signOut()}
+            style={{
+              background: 'transparent', border: `1px solid ${palette.topBorder}`,
+              borderRadius: '6px', color: palette.muted, fontSize: '11px',
+              fontWeight: 600, fontFamily: 'Sora, sans-serif', padding: '4px 10px', cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#FCA5A5'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.2)'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = palette.muted; e.currentTarget.style.borderColor = palette.topBorder; e.currentTarget.style.background = 'transparent'; }}
+          >
+            Sign Out
+          </button>
+        </div>
       </div>
 
       {/* ── Main ── */}
@@ -135,10 +248,10 @@ export default function PreSession({ onStart }: PreSessionProps) {
         <div style={{ width: '100%', maxWidth: '480px' }}>
 
           {/* Page title */}
-          <p style={{ fontSize: '11px', color: '#1E3A5A', marginBottom: '6px', letterSpacing: '0.8px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <p style={{ fontSize: '11px', color: palette.subtle, marginBottom: '6px', letterSpacing: '0.8px', fontWeight: 700, textTransform: 'uppercase' }}>
             New Consultation
           </p>
-          <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#E8F0FF', margin: '0 0 28px', letterSpacing: '-0.5px' }}>
+          <h1 style={{ fontSize: '22px', fontWeight: 700, color: palette.title, margin: '0 0 28px', letterSpacing: '-0.5px' }}>
             {selectedPatient ? `${selectedPatient.first_name} ${selectedPatient.last_name}` : 'Find a patient'}
           </h1>
 
@@ -148,11 +261,11 @@ export default function PreSession({ onStart }: PreSessionProps) {
               {/* Search box */}
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
-                background: '#0A1628', border: '1px solid rgba(255,255,255,0.09)',
+                background: palette.cardBg, border: `1px solid ${palette.cardBorder}`,
                 borderRadius: '10px', padding: '11px 16px',
-                boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+                boxShadow: theme === 'dark' ? '0 2px 12px rgba(0,0,0,0.3)' : '0 10px 24px rgba(15,23,42,0.08)',
               }}>
-                <Search size={14} color="#2E4A66" style={{ flexShrink: 0 }} />
+                <Search size={14} color={palette.muted} style={{ flexShrink: 0 }} />
                 <input
                   ref={inputRef}
                   autoFocus
@@ -163,19 +276,19 @@ export default function PreSession({ onStart }: PreSessionProps) {
                   placeholder="Search by name or health number…"
                   style={{
                     flex: 1, background: 'transparent', border: 'none', outline: 'none',
-                    color: '#E8F0FF', fontSize: '13px', fontFamily: 'Sora, sans-serif',
+                    color: palette.inputText, fontSize: '13px', fontFamily: 'Sora, sans-serif',
                   }}
                 />
-                {loading && <span style={{ fontSize: '10px', color: '#1E3A5A' }}>searching…</span>}
+                {loading && <span style={{ fontSize: '10px', color: palette.subtle }}>searching…</span>}
               </div>
 
               {/* Dropdown results */}
               {showDropdown && results.length > 0 && (
                 <div style={{
                   position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
-                  background: '#0D1E35', border: '1px solid rgba(255,255,255,0.09)',
+                  background: palette.cardBg, border: `1px solid ${palette.cardBorder}`,
                   borderRadius: '10px', overflow: 'hidden', zIndex: 10,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                  boxShadow: theme === 'dark' ? '0 8px 24px rgba(0,0,0,0.5)' : '0 14px 28px rgba(15,23,42,0.12)',
                 }}>
                   {results.map((p, i) => (
                     <div
@@ -184,10 +297,10 @@ export default function PreSession({ onStart }: PreSessionProps) {
                       style={{
                         padding: '10px 16px', cursor: 'pointer',
                         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                        borderBottom: i < results.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                        borderBottom: i < results.length - 1 ? `1px solid ${palette.softBorder}` : 'none',
                         transition: 'background 0.1s',
                       }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(29,78,216,0.12)'}
+                      onMouseEnter={(e) => e.currentTarget.style.background = palette.hoverRow}
                       onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -199,15 +312,15 @@ export default function PreSession({ onStart }: PreSessionProps) {
                           <User size={13} color="#4A7FCA" />
                         </div>
                         <div>
-                          <p style={{ margin: 0, fontSize: '13px', color: '#E8F0FF', fontWeight: 600 }}>
+                          <p style={{ margin: 0, fontSize: '13px', color: palette.title, fontWeight: 600 }}>
                             {p.last_name}, {p.first_name}
                           </p>
-                          <p style={{ margin: 0, fontSize: '11px', color: '#2E4A66' }}>
+                          <p style={{ margin: 0, fontSize: '11px', color: palette.muted }}>
                             DOB {formatDob(p.dob)}
                           </p>
                         </div>
                       </div>
-                      <span style={{ fontSize: '11px', color: '#2E4A66', fontFamily: 'JetBrains Mono, monospace' }}>
+                      <span style={{ fontSize: '11px', color: palette.muted, fontFamily: 'JetBrains Mono, monospace' }}>
                         #{p.health_num}
                       </span>
                     </div>
@@ -219,9 +332,9 @@ export default function PreSession({ onStart }: PreSessionProps) {
               {showDropdown && results.length === 0 && !loading && query.trim().length > 1 && (
                 <div style={{
                   position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
-                  background: '#0D1E35', border: '1px solid rgba(255,255,255,0.07)',
+                  background: palette.cardBg, border: `1px solid ${palette.cardBorder}`,
                   borderRadius: '10px', padding: '14px 16px', zIndex: 10,
-                  color: '#2E4A66', fontSize: '12px', textAlign: 'center',
+                  color: palette.muted, fontSize: '12px', textAlign: 'center',
                 }}>
                   No patients found for "{query}"
                 </div>
@@ -232,7 +345,7 @@ export default function PreSession({ onStart }: PreSessionProps) {
             <div>
               {/* Patient info card */}
               <div style={{
-                background: '#0A1628',
+                background: palette.cardBg,
                 border: '1px solid rgba(16,185,129,0.22)',
                 borderRadius: '12px',
                 overflow: 'hidden',
@@ -253,46 +366,46 @@ export default function PreSession({ onStart }: PreSessionProps) {
                       <User size={15} color="#34D399" />
                     </div>
                     <div>
-                      <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#E8F0FF' }}>
+                      <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: palette.title }}>
                         {selectedPatient.first_name} {selectedPatient.last_name}
                       </p>
-                      <p style={{ margin: 0, fontSize: '11px', color: '#2E4A66' }}>Patient selected</p>
+                      <p style={{ margin: 0, fontSize: '11px', color: palette.muted }}>Patient selected</p>
                     </div>
                   </div>
                   <button
                     onClick={handleClear}
                     style={{
-                      background: 'transparent', border: '1px solid rgba(255,255,255,0.07)',
-                      borderRadius: '6px', color: '#2E4A66', fontSize: '11px',
+                      background: 'transparent', border: `1px solid ${palette.topBorder}`,
+                      borderRadius: '6px', color: palette.muted, fontSize: '11px',
                       fontWeight: 600, fontFamily: 'Sora, sans-serif',
                       padding: '4px 10px', cursor: 'pointer',
                       display: 'flex', alignItems: 'center', gap: '4px',
                     }}
                     onMouseEnter={(e) => { e.currentTarget.style.color = '#93BBFF'; e.currentTarget.style.borderColor = 'rgba(29,78,216,0.3)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = '#2E4A66'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = palette.muted; e.currentTarget.style.borderColor = palette.topBorder; }}
                   >
                     <ArrowLeft size={11} /> Change
                   </button>
                 </div>
 
                 {/* Patient details grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderBottom: `1px solid ${palette.softBorder}` }}>
                   {[
-                    { icon: <Calendar size={12} color="#2E4A66" />, label: 'Date of Birth', value: formatDob(selectedPatient.dob) },
-                    { icon: <Hash size={12} color="#2E4A66" />, label: 'Health Number', value: `#${selectedPatient.health_num}` },
-                    { icon: <User size={12} color="#2E4A66" />, label: 'Patient ID', value: selectedPatient.id.slice(0, 8) + '…' },
+                    { icon: <Calendar size={12} color={palette.muted} />, label: 'Date of Birth', value: formatDob(selectedPatient.dob) },
+                    { icon: <Hash size={12} color={palette.muted} />, label: 'Health Number', value: `#${selectedPatient.health_num}` },
+                    { icon: <User size={12} color={palette.muted} />, label: 'Patient ID', value: selectedPatient.id.slice(0, 8) + '…' },
                   ].map((item, i) => (
                     <div key={i} style={{
                       padding: '10px 14px',
-                      borderRight: i < 2 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                      borderRight: i < 2 ? `1px solid ${palette.softBorder}` : 'none',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '3px' }}>
                         {item.icon}
-                        <span style={{ fontSize: '9px', color: '#1E3A5A', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        <span style={{ fontSize: '9px', color: palette.subtle, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                           {item.label}
                         </span>
                       </div>
-                      <span style={{ fontSize: '12px', color: '#7A9AB8', fontFamily: 'JetBrains Mono, monospace' }}>
+                      <span style={{ fontSize: '12px', color: theme === 'dark' ? '#7A9AB8' : '#334155', fontFamily: 'JetBrains Mono, monospace' }}>
                         {item.value}
                       </span>
                     </div>
@@ -301,7 +414,7 @@ export default function PreSession({ onStart }: PreSessionProps) {
               </div>
 
               {/* Session type buttons */}
-              <p style={{ fontSize: '11px', color: '#1E3A5A', margin: '20px 0 10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+              <p style={{ fontSize: '11px', color: palette.subtle, margin: '20px 0 10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.6px' }}>
                 Choose session type
               </p>
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -311,28 +424,28 @@ export default function PreSession({ onStart }: PreSessionProps) {
                   onClick={() => onStart('live', selectedPatient)}
                   style={{
                     flex: 1, padding: '14px 12px',
-                    background: 'rgba(29,78,216,0.18)',
-                    border: '1px solid rgba(29,78,216,0.35)',
+                    background: sessionStyles.live.bg,
+                    border: `1px solid ${sessionStyles.live.border}`,
                     borderRadius: '10px', cursor: 'pointer',
                     textAlign: 'left',
                     transition: 'all 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(29,78,216,0.26)'; e.currentTarget.style.borderColor = 'rgba(29,78,216,0.5)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(29,78,216,0.18)'; e.currentTarget.style.borderColor = 'rgba(29,78,216,0.35)'; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = sessionStyles.live.hoverBg; e.currentTarget.style.borderColor = sessionStyles.live.hoverBorder; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = sessionStyles.live.bg; e.currentTarget.style.borderColor = sessionStyles.live.border; }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                     <div style={{
                       width: '28px', height: '28px', borderRadius: '7px',
-                      background: 'rgba(29,78,216,0.25)', border: '1px solid rgba(29,78,216,0.4)',
+                      background: sessionStyles.live.iconBg, border: `1px solid ${sessionStyles.live.iconBorder}`,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}>
-                      <Mic size={13} color="#93BBFF" />
+                      <Mic size={13} color={sessionStyles.live.iconColor} />
                     </div>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#93BBFF', fontFamily: 'Sora, sans-serif' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: sessionStyles.live.titleColor, fontFamily: 'Sora, sans-serif' }}>
                       Live Session
                     </span>
                   </div>
-                  <p style={{ margin: 0, fontSize: '11px', color: '#2E4A66', lineHeight: 1.5 }}>
+                  <p style={{ margin: 0, fontSize: '11px', color: sessionStyles.live.descColor, lineHeight: 1.5 }}>
                     Real-time transcription with ElevenLabs diarization
                   </p>
                 </button>
@@ -342,28 +455,28 @@ export default function PreSession({ onStart }: PreSessionProps) {
                   onClick={() => onStart('demo', selectedPatient)}
                   style={{
                     flex: 1, padding: '14px 12px',
-                    background: 'rgba(139,92,246,0.1)',
-                    border: '1px solid rgba(139,92,246,0.25)',
+                    background: sessionStyles.demo.bg,
+                    border: `1px solid ${sessionStyles.demo.border}`,
                     borderRadius: '10px', cursor: 'pointer',
                     textAlign: 'left',
                     transition: 'all 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(139,92,246,0.18)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(139,92,246,0.1)'; e.currentTarget.style.borderColor = 'rgba(139,92,246,0.25)'; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = sessionStyles.demo.hoverBg; e.currentTarget.style.borderColor = sessionStyles.demo.hoverBorder; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = sessionStyles.demo.bg; e.currentTarget.style.borderColor = sessionStyles.demo.border; }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                     <div style={{
                       width: '28px', height: '28px', borderRadius: '7px',
-                      background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)',
+                      background: sessionStyles.demo.iconBg, border: `1px solid ${sessionStyles.demo.iconBorder}`,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}>
-                      <Play size={13} color="#C4B5FD" />
+                      <Play size={13} color={sessionStyles.demo.iconColor} />
                     </div>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#C4B5FD', fontFamily: 'Sora, sans-serif' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: sessionStyles.demo.titleColor, fontFamily: 'Sora, sans-serif' }}>
                       Demo
                     </span>
                   </div>
-                  <p style={{ margin: 0, fontSize: '11px', color: '#2E4A66', lineHeight: 1.5 }}>
+                  <p style={{ margin: 0, fontSize: '11px', color: sessionStyles.demo.descColor, lineHeight: 1.5 }}>
                     Replay the sample heart failure consultation
                   </p>
                 </button>
@@ -376,7 +489,7 @@ export default function PreSession({ onStart }: PreSessionProps) {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Clock size={12} color="#1E3A5A" />
-                <span style={{ fontSize: '11px', color: '#1E3A5A', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+                <span style={{ fontSize: '11px', color: palette.subtle, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px' }}>
                   Recent Consultations
                 </span>
               </div>
@@ -387,8 +500,8 @@ export default function PreSession({ onStart }: PreSessionProps) {
                 {[1, 2, 3].map((i) => (
                   <div key={i} style={{
                     height: '60px', borderRadius: '10px',
-                    background: 'rgba(255,255,255,0.02)',
-                    border: '1px solid rgba(255,255,255,0.04)',
+                    background: theme === 'dark' ? 'rgba(255,255,255,0.02)' : '#E2E8F0',
+                    border: `1px solid ${palette.softBorder}`,
                     animation: 'shimmer 1.5s infinite',
                   }} />
                 ))}
@@ -396,7 +509,7 @@ export default function PreSession({ onStart }: PreSessionProps) {
             )}
 
             {!recentLoading && recent.length === 0 && (
-              <p style={{ fontSize: '12px', color: '#1A2E44', textAlign: 'center', padding: '20px 0' }}>
+              <p style={{ fontSize: '12px', color: palette.subtle, textAlign: 'center', padding: '20px 0' }}>
                 No recent consultations
               </p>
             )}
@@ -407,15 +520,15 @@ export default function PreSession({ onStart }: PreSessionProps) {
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '12px 14px',
-                  background: '#0A1628',
-                  border: '1px solid rgba(255,255,255,0.05)',
+                  background: palette.cardBg,
+                  border: `1px solid ${palette.softBorder}`,
                   borderRadius: '10px',
                   marginBottom: '6px',
                   cursor: 'pointer',
                   transition: 'border-color 0.15s',
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.borderColor = 'rgba(29,78,216,0.2)'}
-                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'}
+                onMouseLeave={(e) => e.currentTarget.style.borderColor = palette.softBorder}
                 onClick={() => handleSelect(c.patients)}
               >
                 {/* Left: patient info */}
@@ -428,10 +541,10 @@ export default function PreSession({ onStart }: PreSessionProps) {
                     <User size={13} color="#4A7FCA" />
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: '13px', color: '#CBD5E1', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <p style={{ margin: 0, fontSize: '13px', color: palette.rowText, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {c.patients.last_name}, {c.patients.first_name}
                     </p>
-                    <p style={{ margin: 0, fontSize: '11px', color: '#1E3A5A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <p style={{ margin: 0, fontSize: '11px', color: palette.rowSubtle, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {c.soap?.assessment ? `${String(c.soap.assessment).slice(0, 45)}…` : 'No assessment recorded'}
                     </p>
                   </div>
@@ -439,7 +552,7 @@ export default function PreSession({ onStart }: PreSessionProps) {
 
                 {/* Right: time + new consult button */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '10px' }}>
-                  <span style={{ fontSize: '10px', color: '#1E3A5A' }}>{timeAgo(c.created_at)}</span>
+                  <span style={{ fontSize: '10px', color: palette.rowSubtle }}>{timeAgo(c.created_at)}</span>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

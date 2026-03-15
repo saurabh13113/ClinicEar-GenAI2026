@@ -3,17 +3,17 @@ GenAI Genesis 2026 | Sun Life + IBM Tracks
 
 ## What It Does
 
-Canada is facing a growing physician shortage. There are not enough doctors, the ones we have are stretched thin, and nearly two hours of every physician's day gets consumed by paperwork rather than patients. That gap is what inspired ClinicEar.
+Canada is facing a growing physician shortage. There are not enough doctors, the ones we have are stretched thin, and **nearly two hours of every physician's day gets consumed by paperwork** rather than patients. That gap is what inspired ClinicEar.
 
-ClinicEar listens to a doctor-patient consultation in real time and automatically handles all clinical documentation — so the physician can stay fully present in the conversation rather than splitting their attention between the patient and a keyboard. When the session ends, a structured SOAP note is ready and automatically exported to the existing patient record. No typing, no dictating, no catching up after hours.
+ClinicEar listens to a doctor-patient consultation in real time and **automatically handles all clinical documentation** — so the physician can stay fully present in the conversation rather than splitting their attention between the patient and a keyboard. When the session ends, a **structured SOAP note is ready and automatically exported** to the existing patient record. No typing, no dictating, no catching up after hours.
 
-Patients also walk away with something tangible: a plain-language summary of their consultation they can actually understand, with the option to receive a digital copy by email — helping them stay informed and proactive about their own health.
+Patients also walk away with something tangible: a **plain-language summary** of their consultation they can actually understand, with the option to receive a digital copy by email — helping them stay informed and proactive about their own health.
 
 The system is designed to be **database-agnostic**, plugging into existing healthcare record systems with minimal setup. This makes ClinicEar inherently mobile:
 
-- A physician can work across multiple clinics and immediately access patient context from any connected database
-- Doctors travelling to high-demand or underserved communities can walk in and start delivering care without onboarding overhead
-- By cutting documentation time, physicians can move through more patients per day — reducing wait times and expanding access to care in communities that need it most
+- A physician can work across **multiple clinics** and immediately access patient context from any connected database
+- Doctors travelling to **high-demand or underserved communities** can walk in and start delivering care without onboarding overhead
+- By cutting documentation time, physicians can **move through more patients per day** — reducing wait times and expanding access to care in communities that need it most
 
 ## Key Features
 
@@ -50,7 +50,7 @@ npm run dev                 # runs on http://localhost:5173
 1. Sign in or create an account
 2. Search for a patient by name or health number
 3. Select the patient and click **Confirm**
-4. Click **Start Consultation** to begin live recording, or **Demo Mode** to run a scripted consultation
+4. Click **Start Consultation** to begin live recording
 5. Speak naturally — the transcript streams in real time on the left panel
 6. Click **End Consultation** when finished
 7. The SOAP note generates automatically on the right panel

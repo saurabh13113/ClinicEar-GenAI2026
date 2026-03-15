@@ -33,6 +33,8 @@ npm run dev                 # runs on http://localhost:5173
 
 ## Built With
 
+- [Railtracks](https://github.com/RailtownAI/railtracks) — Canadian agentic AI framework used to orchestrate the SOAP note generation pipeline with structured output and observability
+
 
 
 

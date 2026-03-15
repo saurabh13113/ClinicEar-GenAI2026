@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
+from agents import soap_flow, SOAPNoteSchema
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from supabase import create_client
@@ -494,33 +495,21 @@ async def search_patients(q: str, user = Depends(verify_token)):
 
 @app.post("/generate-note", response_model=SOAPNote)
 async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
-    """Accepts transcript, returns structured SOAP note via Claude."""
+    """Accepts transcript, returns structured SOAP note via Railtracks."""
     try:
-        response = openrouter_client.chat.completions.create(
-            model=INFERENCE_MODEL,
-            max_tokens=2048,
-            messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}",
-                },
-            ],
+        result: SOAPNoteSchema = await soap_flow.ainvoke(
+            f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}"
         )
-
-        raw = strip_fences(extract_text(response))
-        data = json.loads(raw)
+        data = result.model_dump()
 
         supabase.table("consultations").insert({
             "created_by": user.user.id,
             "patient_id": req.patient_id,
             "soap": data,
         }).execute()
-        
+
         return SOAPNote(**data)
 
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Model returned invalid JSON: {e}")
     except Exception as e:
         print(f"Error in /generate-note: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -211,7 +211,7 @@ export default function PreSession({ onStart }: PreSessionProps) {
             <polyline points="1,11 5,11 7,4 9,18 11,9 13,14 15,11 21,11"
               stroke="#1d4ed8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span style={{ fontSize: '13px', fontWeight: 700, color: palette.title, letterSpacing: '-0.3px' }}>ClinicalEar</span>
+          <span style={{ fontSize: '13px', fontWeight: 700, color: palette.title, letterSpacing: '-0.3px' }}>ClinicEar</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button

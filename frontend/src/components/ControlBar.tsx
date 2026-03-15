@@ -77,7 +77,7 @@ export default function ControlBar({
               className="text-[15px] font-bold tracking-tight"
               style={{ color: '#E2E8F0', fontFamily: 'Sora, sans-serif' }}
             >
-              ClinicalEar
+              ClinicEar
             </div>
             <div className="text-[10px] font-medium" style={{ color: '#1E3A5A' }}>
               AI Clinical Note Generator

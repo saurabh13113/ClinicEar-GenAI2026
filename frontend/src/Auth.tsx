@@ -173,7 +173,7 @@ export default function Auth() {
                 letterSpacing: '-0.4px',
               }}
             >
-              ClinicalEar
+              ClinicEar
             </span>
           </div>
           <p style={{ fontSize: '12px', color: palette.muted, margin: 0 }}>

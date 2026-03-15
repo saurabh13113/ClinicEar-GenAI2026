@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { FileText, FileHeart } from 'lucide-react';
+import { FileText, Heart } from 'lucide-react';
 import ControlBar from './components/ControlBar';
 import TranscriptPanel from './components/TranscriptPanel';
 import SOAPNotePanel from './components/SOAPNotePanel';
@@ -79,6 +79,10 @@ function getRealtimeWsUrl() {
   if (apiUrl && /^https?:\/\//.test(apiUrl)) {
     const wsBase = apiUrl.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
     return `${wsBase}/ws/realtime-transcript`;
+  }
+
+  if (typeof window === 'undefined') {
+    return 'ws://localhost/ws/realtime-transcript';
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -829,7 +833,7 @@ export default function App() {
                   : { background: 'transparent', color: '#2E4A66', border: '1px solid transparent' }
               }
             >
-              <FileHeart className="w-3.5 h-3.5" />
+              <Heart className="w-3.5 h-3.5" />
               Patient Summary
             </button>
 

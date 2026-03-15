@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { FileText, FileHeart } from 'lucide-react';
+import { FileText, Heart } from 'lucide-react';
 import ControlBar from './components/ControlBar';
 import TranscriptPanel from './components/TranscriptPanel';
 import SOAPNotePanel from './components/SOAPNotePanel';
@@ -81,6 +81,10 @@ function getRealtimeWsUrl() {
     return `${wsBase}/ws/realtime-transcript`;
   }
 
+  if (typeof window === 'undefined') {
+    return 'ws://localhost/ws/realtime-transcript';
+  }
+
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
   return `${protocol}://${window.location.host}/ws/realtime-transcript`;
 }
@@ -93,11 +97,22 @@ export default function App() {
   const [audit, setAudit]             = useState<AuditResult | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [error, setError]             = useState<string | null>(null);
+  const [finalizingSession, setFinalizingSession] = useState(false);
   const [rightTab, setRightTab]       = useState<RightTab>('soap');
 
   const demoIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const realtimeWsRef = useRef<WebSocket | null>(null);
   const partialLineIdRef = useRef<string | null>(null);
+  const commitToLineIdRef = useRef<Record<string, string>>({});
+  const pendingSpeakerByCommitRef = useRef<Record<string, { speakerId?: string; confidence?: number }>>({});
+  const seenCommitIdsRef = useRef<Set<string>>(new Set());
+  const queuedAudioChunksRef = useRef<string[]>([]);
+  const reconnectAttemptsRef = useRef<number>(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveStreamingRef = useRef<boolean>(false);
+  const endingSessionRef = useRef<boolean>(false);
+  const speakerIdToRoleRef = useRef<Record<string, 'Doctor' | 'Patient'>>({});
+  const firstResolvedSpeakerIdRef = useRef<string | null>(null);
   const recordingStartMsRef = useRef<number>(0);
   const transcriptRef = useRef<TranscriptLine[]>([]);
   const lastCommittedRef = useRef<{ text: string; atMs: number } | null>(null);
@@ -111,6 +126,10 @@ export default function App() {
 
   useEffect(() => {
     return () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (realtimeWsRef.current) {
         realtimeWsRef.current.close();
         realtimeWsRef.current = null;
@@ -124,10 +143,26 @@ export default function App() {
     setTranscript((prev) => [...prev, { ...line, id: `${Date.now()}-${Math.random()}` }]);
   }, []);
 
-  const getNextSpeaker = useCallback((lines: TranscriptLine[]): 'Doctor' | 'Patient' => {
-    const lastFinal = [...lines].reverse().find((line) => !line.id.startsWith('partial-'));
-    if (!lastFinal) return 'Doctor';
-    return lastFinal.speaker === 'Doctor' ? 'Patient' : 'Doctor';
+  const resolveSpeakerRole = useCallback((speakerId?: string | null) => {
+    const id = (speakerId || '').trim();
+    if (!id) return null;
+
+    const existing = speakerIdToRoleRef.current[id];
+    if (existing) return existing;
+
+    if (!firstResolvedSpeakerIdRef.current) {
+      firstResolvedSpeakerIdRef.current = id;
+      speakerIdToRoleRef.current[id] = 'Doctor';
+      return 'Doctor';
+    }
+
+    if (id === firstResolvedSpeakerIdRef.current) {
+      speakerIdToRoleRef.current[id] = 'Doctor';
+      return 'Doctor';
+    }
+
+    speakerIdToRoleRef.current[id] = 'Patient';
+    return 'Patient';
   }, []);
 
   const upsertPartialLine = useCallback((text: string) => {
@@ -171,9 +206,7 @@ export default function App() {
       const partialId = existingId || `partial-${Date.now()}-${Math.random()}`;
       partialLineIdRef.current = partialId;
 
-      const speaker = existingPartial?.speaker === 'Doctor' || existingPartial?.speaker === 'Patient'
-        ? existingPartial.speaker
-        : getNextSpeaker(stableLines);
+      const speaker = existingPartial?.speaker || 'Analyzing speaker…';
 
       const partialLine: TranscriptLine = {
         id: partialId,
@@ -184,9 +217,14 @@ export default function App() {
 
       return [...stableLines, partialLine];
     });
-  }, [getNextSpeaker]);
+  }, []);
 
-  const commitLiveLine = useCallback((text: string, timestampMs?: number) => {
+  const commitLiveLine = useCallback((text: string, timestampMs?: number, speakerId?: string, commitId?: string) => {
+    if (commitId) {
+      if (seenCommitIdsRef.current.has(commitId)) return;
+      seenCommitIdsRef.current.add(commitId);
+    }
+
     const trimmed = text.trim();
     if (!trimmed) return;
     const normalizedIncoming = normalizeTranscriptText(trimmed);
@@ -206,35 +244,54 @@ export default function App() {
     let didAppend = false;
 
     setTranscript((prev) => {
-      const existingPartial = partialLineIdRef.current
-        ? prev.find((line) => line.id === partialLineIdRef.current)
-        : undefined;
-
       const withoutPartial = prev.filter((line) => !line.id.startsWith('partial-'));
 
-      const speaker = existingPartial?.speaker === 'Doctor' || existingPartial?.speaker === 'Patient'
-        ? existingPartial.speaker
-        : getNextSpeaker(withoutPartial);
+      const pendingReconcile = commitId ? pendingSpeakerByCommitRef.current[commitId] : undefined;
+      const resolvedSpeakerId = pendingReconcile?.speakerId || speakerId;
+      const resolvedSpeaker = resolveSpeakerRole(resolvedSpeakerId);
+      const speaker = resolvedSpeaker || 'Pending speaker';
 
-      const lastFinalLine = [...withoutPartial].reverse().find((line) => !line.id.startsWith('partial-'));
-      if (lastFinalLine) {
-        const normalizedLast = normalizeTranscriptText(lastFinalLine.text);
-        if (normalizedLast === normalizedIncoming) {
-          partialLineIdRef.current = null;
-          return withoutPartial;
-        }
+      const candidateTimestamp = typeof timestampMs === 'number'
+        ? timestampMs
+        : Date.now() - recordingStartMsRef.current;
+
+      const hasNearbyDuplicate = withoutPartial
+        .slice(-8)
+        .some((line) => {
+          const normalizedLine = normalizeTranscriptText(line.text);
+          const textMatches = (
+            normalizedLine === normalizedIncoming
+            || normalizedLine.startsWith(normalizedIncoming)
+            || normalizedIncoming.startsWith(normalizedLine)
+          );
+          const nearInTime = Math.abs(line.timestamp - candidateTimestamp) < 3000;
+          return textMatches && nearInTime;
+        });
+
+      if (hasNearbyDuplicate) {
+        partialLineIdRef.current = null;
+        return withoutPartial;
       }
 
       partialLineIdRef.current = null;
       didAppend = true;
 
+      const lineId = `${Date.now()}-${Math.random()}`;
+      if (commitId) {
+        commitToLineIdRef.current[commitId] = lineId;
+        if (pendingReconcile) {
+          delete pendingSpeakerByCommitRef.current[commitId];
+        }
+      }
+
       return [
         ...withoutPartial,
         {
-          id: `${Date.now()}-${Math.random()}`,
+          id: lineId,
           speaker,
+          speakerId: resolvedSpeakerId || undefined,
           text: trimmed,
-          timestamp: typeof timestampMs === 'number' ? timestampMs : Date.now() - recordingStartMsRef.current,
+          timestamp: candidateTimestamp,
         },
       ];
     });
@@ -242,9 +299,119 @@ export default function App() {
     if (didAppend) {
       lastCommittedRef.current = { text: normalizedIncoming, atMs: now };
     }
-  }, [getNextSpeaker]);
+  }, [resolveSpeakerRole]);
+
+  const reconcileSessionSpeakers = useCallback(async (blob: Blob, lines: TranscriptLine[]): Promise<TranscriptLine[]> => {
+    const committedLines = lines.filter((line) => !line.id.startsWith('partial-'));
+    if (!committedLines.length) return committedLines;
+
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+
+    const b64 = await blobToBase64(blob);
+    const payload = {
+      audio_base64: b64,
+      filename: 'audio.webm',
+      segments: committedLines.map((line) => ({
+        text: line.text,
+        timestamp_ms: line.timestamp,
+      })),
+    };
+
+    const res = await fetch(`${API}/reconcile-speakers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Speaker reconciliation failed: ${res.statusText}`);
+    }
+
+    const body = await res.json() as {
+      segments?: Array<{
+        text: string;
+        timestamp_ms: number;
+        speaker_id: string;
+        confidence?: number;
+      }>;
+    };
+
+    const reconciledSegments = Array.isArray(body.segments) ? body.segments : [];
+    if (!reconciledSegments.length) return committedLines;
+
+    return committedLines.map((line, index) => {
+      const reconciled = reconciledSegments[index];
+      if (!reconciled) return line;
+      const speaker = resolveSpeakerRole(reconciled.speaker_id) || line.speaker;
+      return {
+        ...line,
+        speakerId: reconciled.speaker_id,
+        speaker,
+      };
+    });
+  }, [resolveSpeakerRole]);
+
+  const waitForLiveCommitDrain = useCallback(async () => {
+    let lastCount = transcriptRef.current.filter((line) => !line.id.startsWith('partial-')).length;
+    let stableRounds = 0;
+
+    for (let i = 0; i < 16; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const currentCount = transcriptRef.current.filter((line) => !line.id.startsWith('partial-')).length;
+      if (currentCount === lastCount) {
+        stableRounds += 1;
+      } else {
+        stableRounds = 0;
+        lastCount = currentCount;
+      }
+
+      if (stableRounds >= 3) break;
+    }
+  }, []);
+
+  const flushQueuedAudioChunks = useCallback(() => {
+    const ws = realtimeWsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    while (queuedAudioChunksRef.current.length > 0) {
+      const chunk = queuedAudioChunksRef.current.shift();
+      if (!chunk) continue;
+      ws.send(JSON.stringify({
+        type: 'audio_chunk',
+        audio_base64: chunk,
+      }));
+    }
+  }, []);
+
+  const reconcileCommittedSpeaker = useCallback((commitId: string, speakerId?: string) => {
+    const lineId = commitToLineIdRef.current[commitId];
+    const speaker = resolveSpeakerRole(speakerId);
+    if (!speaker) return;
+
+    if (!lineId) {
+      pendingSpeakerByCommitRef.current[commitId] = { speakerId };
+      return;
+    }
+
+    setTranscript((prev) => prev.map((line) => (
+      line.id === lineId ? { ...line, speaker, speakerId } : line
+    )));
+  }, [resolveSpeakerRole]);
 
   const connectRealtimeTranscriptSocket = useCallback(async () => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    if (realtimeWsRef.current && realtimeWsRef.current.readyState === WebSocket.OPEN) {
+      return;
+    }
+
     if (realtimeWsRef.current) {
       realtimeWsRef.current.close();
       realtimeWsRef.current = null;
@@ -256,21 +423,30 @@ export default function App() {
       const ws = new WebSocket(wsUrl);
       realtimeWsRef.current = ws;
 
-      ws.onopen = () => resolve();
+      ws.onopen = () => {
+        reconnectAttemptsRef.current = 0;
+        flushQueuedAudioChunks();
+        resolve();
+      };
 
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data) as {
             type?: string;
+            commit_id?: string;
+            speaker_id?: string;
             text?: string;
             timestamp_ms?: number;
+            confidence?: number;
             message?: string;
           };
 
           if (msg.type === 'partial' && msg.text) {
             upsertPartialLine(msg.text);
           } else if (msg.type === 'committed' && msg.text) {
-            commitLiveLine(msg.text, msg.timestamp_ms);
+            commitLiveLine(msg.text, msg.timestamp_ms, msg.speaker_id, msg.commit_id);
+          } else if (msg.type === 'speaker_reconciled' && msg.commit_id) {
+            reconcileCommittedSpeaker(msg.commit_id, msg.speaker_id);
           } else if (msg.type === 'error') {
             setError(msg.message || 'Realtime transcription failed');
           }
@@ -282,9 +458,21 @@ export default function App() {
       ws.onerror = () => reject(new Error('Could not connect to realtime transcription service'));
       ws.onclose = () => {
         if (realtimeWsRef.current === ws) realtimeWsRef.current = null;
+
+        if (!liveStreamingRef.current || endingSessionRef.current) return;
+
+        const nextAttempt = reconnectAttemptsRef.current + 1;
+        reconnectAttemptsRef.current = nextAttempt;
+        const backoffMs = Math.min(3000, 400 * (2 ** Math.min(nextAttempt, 4)));
+
+        reconnectTimerRef.current = setTimeout(() => {
+          connectRealtimeTranscriptSocket().catch(() => {
+            setError('Realtime connection interrupted; retrying…');
+          });
+        }, backoffMs);
       };
     });
-  }, [commitLiveLine, upsertPartialLine]);
+  }, [commitLiveLine, flushQueuedAudioChunks, reconcileCommittedSpeaker, upsertPartialLine]);
 
   const generateNoteFromTranscript = useCallback(async (lines: TranscriptLine[]) => {
     setStatus('processing');
@@ -396,6 +584,15 @@ export default function App() {
     setRightTab('soap');
 
     partialLineIdRef.current = null;
+    commitToLineIdRef.current = {};
+    pendingSpeakerByCommitRef.current = {};
+    seenCommitIdsRef.current = new Set();
+    queuedAudioChunksRef.current = [];
+    reconnectAttemptsRef.current = 0;
+    endingSessionRef.current = false;
+    liveStreamingRef.current = true;
+    speakerIdToRoleRef.current = {};
+    firstResolvedSpeakerIdRef.current = null;
     lastCommittedRef.current = null;
     recordingStartMsRef.current = Date.now();
 
@@ -403,96 +600,116 @@ export default function App() {
 
     await startRecording({
       onChunk: async (chunk) => {
-        if (!realtimeWsRef.current || realtimeWsRef.current.readyState !== WebSocket.OPEN) return;
-        realtimeWsRef.current.send(JSON.stringify({
-          type: 'audio_chunk',
-          audio_base64: chunk.base64,
-        }));
+        queuedAudioChunksRef.current.push(chunk.base64);
+        if (queuedAudioChunksRef.current.length > 500) {
+          queuedAudioChunksRef.current.shift();
+        }
+
+        flushQueuedAudioChunks();
+
+        if (!realtimeWsRef.current || realtimeWsRef.current.readyState !== WebSocket.OPEN) {
+          connectRealtimeTranscriptSocket().catch(() => undefined);
+        }
       },
     });
 
 
     setStatus('recording');
     timer.start();
-  }, [connectRealtimeTranscriptSocket, startRecording, timer]);
+  }, [connectRealtimeTranscriptSocket, flushQueuedAudioChunks, startRecording, timer]);
 
   const endSession = useCallback(async () => {
-    timer.stop();
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    setStatus('processing');
+    setFinalizingSession(true);
+    try {
+      timer.stop();
+      endingSessionRef.current = true;
+      liveStreamingRef.current = false;
 
-    if (isRecording) {
-      const blob = await stopRecording();
+      if (isRecording) {
+        const blob = await stopRecording();
 
-      if (realtimeWsRef.current && realtimeWsRef.current.readyState === WebSocket.OPEN) {
-        realtimeWsRef.current.send(JSON.stringify({ type: 'commit' }));
-        realtimeWsRef.current.send(JSON.stringify({ type: 'stop' }));
-      }
+        flushQueuedAudioChunks();
 
-      await new Promise((resolve) => setTimeout(resolve, 900));
+        if (realtimeWsRef.current && realtimeWsRef.current.readyState === WebSocket.OPEN) {
+          realtimeWsRef.current.send(JSON.stringify({ type: 'commit' }));
+        }
 
-      if (realtimeWsRef.current) {
-        realtimeWsRef.current.close();
-        realtimeWsRef.current = null;
-      }
+        await waitForLiveCommitDrain();
 
-      const liveLines = transcriptRef.current.filter((line) => !line.id.startsWith('partial-'));
+        if (realtimeWsRef.current && realtimeWsRef.current.readyState === WebSocket.OPEN) {
+          realtimeWsRef.current.send(JSON.stringify({ type: 'stop' }));
+        }
 
-      if (blob) {
-        if (liveLines.length > 0) {
-          setTranscript(liveLines);
-          await generateNoteFromTranscript(liveLines);
-        } else {
-          setStatus('processing');
-          try {
-            const b64 = await blobToBase64(blob);
-            const res = await fetch(`${API}/transcribe`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-            },
-              body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
-            });
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
-            if (!res.ok) throw new Error('Transcription failed');
-            const { transcript: raw }: { transcript: string } = await res.json();
+        if (realtimeWsRef.current) {
+          realtimeWsRef.current.close();
+          realtimeWsRef.current = null;
+        }
 
-            const lines: TranscriptLine[] = raw
-              .split(/[.!?]+/)
-              .filter((s) => s.trim().length > 0)
-              .map((s, idx) => ({
-                id: String(idx),
-                speaker: idx % 2 === 0 ? 'Doctor' : 'Patient',
-                text: s.trim(),
-                timestamp: idx * 3000,
-              }));
+        const liveLines = transcriptRef.current.filter((line) => !line.id.startsWith('partial-'));
 
-            setTranscript(lines);
-            await generateNoteFromTranscript(lines);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : 'Transcription error');
+        if (blob) {
+          if (liveLines.length > 0) {
+            try {
+              const reconciledLines = await reconcileSessionSpeakers(blob, liveLines);
+              setTranscript(reconciledLines);
+              await generateNoteFromTranscript(reconciledLines);
+            } catch (err) {
+              console.error(err);
+              setError(err instanceof Error ? err.message : 'Speaker reconciliation failed');
+              setTranscript(liveLines);
+              setStatus('done');
+            }
+          } else {
+            setError('No live transcript captured from ElevenLabs. Please retry the recording.');
             setStatus('done');
           }
         }
+      } else {
+        await generateNoteFromTranscript(transcript);
       }
-    } else {
-      await generateNoteFromTranscript(transcript);
+    } finally {
+      setFinalizingSession(false);
     }
-  }, [isRecording, stopRecording, transcript, generateNoteFromTranscript, timer]);
+  }, [
+    flushQueuedAudioChunks,
+    generateNoteFromTranscript,
+    isRecording,
+    reconcileSessionSpeakers,
+    stopRecording,
+    timer,
+    transcript,
+    waitForLiveCommitDrain,
+  ]);
 
   const reset = useCallback(() => {
     if (demoIntervalRef.current) clearTimeout(demoIntervalRef.current);
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     if (realtimeWsRef.current) {
       realtimeWsRef.current.close();
       realtimeWsRef.current = null;
     }
     partialLineIdRef.current = null;
+    commitToLineIdRef.current = {};
+    pendingSpeakerByCommitRef.current = {};
+    seenCommitIdsRef.current = new Set();
+    queuedAudioChunksRef.current = [];
+    reconnectAttemptsRef.current = 0;
+    endingSessionRef.current = false;
+    liveStreamingRef.current = false;
+    speakerIdToRoleRef.current = {};
+    firstResolvedSpeakerIdRef.current = null;
     lastCommittedRef.current = null;
     setStatus('idle');
     setTranscript([]);
     setNote(null);
     setAudit(null);
+    setFinalizingSession(false);
     setError(null);
     setRightTab('soap');
     timer.reset();
@@ -524,6 +741,20 @@ export default function App() {
         >
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
           {error}
+        </div>
+      )}
+
+      {finalizingSession && (
+        <div
+          className="px-5 py-2 text-xs font-semibold flex items-center gap-2"
+          style={{
+            background: 'rgba(59,130,246,0.08)',
+            borderBottom: '1px solid rgba(59,130,246,0.2)',
+            color: '#93BBFF',
+          }}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+          Finalizing speaker attribution and clinical note…
         </div>
       )}
 
@@ -571,7 +802,7 @@ export default function App() {
                   : { background: 'transparent', color: '#2E4A66', border: '1px solid transparent' }
               }
             >
-              <FileHeart className="w-3.5 h-3.5" />
+              <Heart className="w-3.5 h-3.5" />
               Patient Summary
             </button>
 

@@ -2,7 +2,8 @@ export type SessionStatus = 'idle' | 'recording' | 'processing' | 'done';
 
 export interface TranscriptLine {
   id: string;
-  speaker: 'Doctor' | 'Patient' | 'Unknown';
+  speaker: string;
+  speakerId?: string;
   text: string;
   timestamp: number;
 }

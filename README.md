@@ -89,16 +89,8 @@ pydantic>=2.9.2
 supabase
 ```
 
-### Database Schema
-```sql
-create table patients (
-  id          uuid primary key default gen_random_uuid(),
-  health_num  int8 unique not null check (health_num > 0),
-  first_name  text not null,
-  last_name   text not null,
-  dob         date,
-  created_at  timestamptz default now()
-);
+- [Railtracks](https://github.com/RailtownAI/railtracks) — Canadian agentic AI framework used to orchestrate the SOAP note generation pipeline with structured output and observability
+
 
 create table consultations (
   id          uuid primary key default gen_random_uuid(),

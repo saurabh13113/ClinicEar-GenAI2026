@@ -220,6 +220,38 @@ export default function ControlBar({
           {isDone && (
             <>
                 <button
+                    onClick={onEndSession}
+                    disabled={isRecording || isProcessing}
+                    className="flex items-center gap-2 px-4 py-1.5 rounded-xl transition-all duration-150"
+                    style={{
+                        background: 'rgba(255,255,255,0.05)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        color: isRecording || isProcessing ? '#1E3A5A' : '#3D5878',
+                        cursor: isRecording || isProcessing ? 'not-allowed' : 'pointer',
+                        opacity: isRecording || isProcessing ? 0.4 : 1,
+                        fontFamily: 'Sora, sans-serif',
+                    }}
+                    onMouseEnter={(e) => {
+                        if (isRecording || isProcessing) return;
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.09)';
+                        e.currentTarget.style.color = '#93BBFF';
+                    }}
+                    onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                        e.currentTarget.style.color = isRecording || isProcessing ? '#1E3A5A' : '#3D5878';
+                    }}
+                    >
+                    <span className="text-xs font-semibold">
+                        {patient.last_name}, {patient.first_name}
+                    </span>
+                    <span
+                        className="text-[10px] font-medium px-1.5 py-0.5 rounded-md"
+                        style={{ background: 'rgba(255,255,255,0.06)', color: '#2E4A66' }}
+                    >
+                        {patient.health_num}
+                    </span>
+                </button>
+                <button
                     onClick={onReset}
                     className="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl transition-all duration-150"
                     style={{ background: 'rgba(255,255,255,0.05)', color: '#3D5878', border: '1px solid rgba(255,255,255,0.08)' }}
@@ -227,7 +259,7 @@ export default function ControlBar({
                     onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#3D5878'; }}
                     >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    New Session
+                    Restart Session
                 </button>
             </>
           )}

@@ -703,8 +703,7 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
     waitForLiveCommitDrain,
   ]);
 
-  const reset = useCallback(() => {
-    console.log('reset called');
+  const cleanupSession = useCallback(() => {
     if (demoIntervalRef.current) clearTimeout(demoIntervalRef.current);
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -733,10 +732,14 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
     setError(null);
     setRightTab('soap');
     timer.reset();
-    console.log('calling onEndSession');
+  }, [timer]);
+  
+  
+  // Change patient — goes back to PreSession
+  const reset = useCallback(() => {
+    cleanupSession();
     onEndSession();
-    console.log('onEndSession called');
-  }, [timer, onEndSession]);
+  }, [cleanupSession, onEndSession]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
@@ -759,7 +762,7 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
         onStartLive={startLive}
         onStartDemo={startDemo}
         onEnd={endSession}
-        onReset={reset}
+        onReset={cleanupSession}
         onEndSession={reset}
         patient={patient}
         theme={theme}

@@ -119,7 +119,7 @@ export default function TranscriptPanel({ lines, status }: TranscriptPanelProps)
 
         {/* Transcript lines */}
         {lines.map((line) => {
-          const isDoctor = line.speaker === 'Doctor';
+          const isDoctor = line.speaker === 'Doctor' || line.speaker === 'Speaker 1';
           return (
             <div key={line.id} className={`flex gap-3 transcript-enter ${isDoctor ? '' : 'flex-row-reverse'}`}>
               {/* Avatar */}

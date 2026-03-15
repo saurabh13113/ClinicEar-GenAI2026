@@ -96,6 +96,11 @@ function getRealtimeWsUrl() {
 
 
 export default function App({ patient, mode, onEndSession }: AppProps) {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'light';
+    const stored = window.localStorage.getItem('theme');
+    return stored === 'dark' ? 'dark' : 'light';
+  });
   const [status, setStatus]           = useState<SessionStatus>('idle');
   const [transcript, setTranscript]   = useState<TranscriptLine[]>([]);
   const [note, setNote]               = useState<SOAPNote | null>(null);
@@ -124,6 +129,15 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
 
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const timer = useSessionTimer();
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme = theme;
+    }
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('theme', theme);
+    }
+  }, [theme]);
 
   useEffect(() => {
     transcriptRef.current = transcript;
@@ -724,10 +738,14 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
     console.log('onEndSession called');
   }, [timer, onEndSession]);
 
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  }, []);
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-screen" style={{ background: '#050C1A', fontFamily: 'Sora, sans-serif' }}>
+    <div className={`app-theme-shell ${theme === 'light' ? 'theme-light' : 'theme-dark'} flex flex-col h-screen`} style={{ background: '#050C1A', fontFamily: 'Sora, sans-serif' }}>
       <ControlBar
         status={status}
         timerFormatted={timer.formatted}
@@ -738,6 +756,8 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
         onReset={reset}
         onEndSession={reset}
         patient={patient}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
 
       {/* Error banner */}

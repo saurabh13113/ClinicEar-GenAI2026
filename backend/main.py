@@ -475,7 +475,7 @@ def verify_token(token = Depends(security)):
 async def recent_consultations(user = Depends(verify_token)):
     try:
         result = supabase.table("consultations")\
-            .select("id, created_at, patient_id, soap, patients(first_name, last_name, health_num)")\
+            .select("id, created_at, patient_id, soap, patients(id, first_name, last_name, health_num, dob)")\
             .eq("created_by", user.user.id)\
             .order("created_at", desc=True)\
             .limit(5)\

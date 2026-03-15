@@ -60,6 +60,7 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_
 
 class GenerateNoteRequest(BaseModel):
     transcript: str
+    patient_id: str
 
 
 class SOAPNote(BaseModel):
@@ -453,6 +454,65 @@ def verify_token(token = Depends(security)):
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
+@app.get("/consultations/recent")
+async def recent_consultations(user = Depends(verify_token)):
+    try:
+        result = supabase.table("consultations")\
+            .select("id, created_at, patient_id, soap, patients(first_name, last_name, health_num)")\
+            .eq("created_by", user.user.id)\
+            .order("created_at", desc=True)\
+            .limit(5)\
+            .execute()
+        return result.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/patients/search")
+async def search_patients(q: str, user = Depends(verify_token)):
+    try:
+        query = supabase.table("patients")\
+            .select("id, health_num, first_name, last_name, dob")
+
+        if q.isdigit():
+            low = int(q) * 10 ** (5 - len(q))
+            high = low + 10 ** (5 - len(q)) - 1
+            result = query.gte("health_num", low).lte("health_num", high).limit(10).execute()
+        else:
+            result = query\
+                .or_(f"last_name.ilike.%{q}%,first_name.ilike.%{q}%")\
+                .limit(10)\
+                .execute()
+
+        return result.data
+    except Exception as e:
+        print(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
+    """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
+    try:
+        audio_bytes = base64.b64decode(req.audio_base64)
+        suffix = "." + req.filename.split(".")[-1] if "." in req.filename else ".webm"
+
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(audio_bytes)
+            tmp_path = f.name
+
+        with open(tmp_path, "rb") as audio_file:
+            result = openai_client.audio.transcriptions.create(
+                model=WHISPER_MODEL,
+                file=audio_file,
+                response_format="text",
+            )
+
+        os.unlink(tmp_path)
+        return TranscribeResponse(transcript=str(result))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/generate-note", response_model=SOAPNote)
 async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
     """Accepts transcript, returns structured SOAP note via Claude."""
@@ -474,6 +534,7 @@ async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
 
         supabase.table("consultations").insert({
             "created_by": user.user.id,
+            "patient_id": req.patient_id,
             "soap": data,
         }).execute()
         

@@ -29,3 +29,14 @@ export interface AuditResult {
   flagged_terms: string[];
   consistency_notes: string;
 }
+
+export interface Patient {
+    id: string;
+    health_num: number;
+    first_name: string;
+    last_name: string;
+    dob: string;
+  }
+
+
+

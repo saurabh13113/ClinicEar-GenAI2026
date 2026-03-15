@@ -7,9 +7,14 @@ import PatientSummaryPanel from './components/PatientSummaryPanel';
 import AuditPanel from './components/AuditPanel';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useSessionTimer } from './hooks/useSessionTimer';
-import type { SessionStatus, TranscriptLine, SOAPNote, AuditResult } from './types';
+import type { SessionStatus, TranscriptLine, SOAPNote, AuditResult, Patient } from './types';
 import { supabase } from './supabase';
 
+export interface AppProps {
+    patient: Patient;
+    mode: 'live' | 'demo' | null;
+    onEndSession: () => void;
+  }
 
 const API = import.meta.env.VITE_API_URL || '/api';
 
@@ -86,7 +91,7 @@ function getRealtimeWsUrl() {
 }
 
 
-export default function App() {
+export default function App({ patient, mode, onEndSession }: AppProps) {
   const [status, setStatus]           = useState<SessionStatus>('idle');
   const [transcript, setTranscript]   = useState<TranscriptLine[]>([]);
   const [note, setNote]               = useState<SOAPNote | null>(null);
@@ -300,7 +305,7 @@ export default function App() {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`,
             },
-            body: JSON.stringify({ transcript: fullText }),
+            body: JSON.stringify({ transcript: fullText, patient_id: patient.id }),
         });
 
       if (!res.ok) throw new Error(`Note generation failed: ${res.statusText}`);
@@ -482,6 +487,7 @@ export default function App() {
   }, [isRecording, stopRecording, transcript, generateNoteFromTranscript, timer]);
 
   const reset = useCallback(() => {
+    console.log('reset called');
     if (demoIntervalRef.current) clearTimeout(demoIntervalRef.current);
     if (realtimeWsRef.current) {
       realtimeWsRef.current.close();
@@ -496,7 +502,10 @@ export default function App() {
     setError(null);
     setRightTab('soap');
     timer.reset();
-  }, [timer]);
+    console.log('calling onEndSession');
+    onEndSession();
+    console.log('onEndSession called');
+  }, [timer, onEndSession]);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -510,6 +519,8 @@ export default function App() {
         onStartDemo={startDemo}
         onEnd={endSession}
         onReset={reset}
+        onEndSession={reset}
+        patient={patient}
       />
 
       {/* Error banner */}

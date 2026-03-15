@@ -39,6 +39,25 @@
   }
 }
 
+.app-theme-shell {
+  min-height: 100vh;
+}
+
+.theme-light {
+  background: #F4F7FB !important;
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.theme-light img,
+.theme-light video,
+.theme-light canvas {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.theme-dark {
+  filter: none;
+}
+
 /* ── Transcript line entrance ── */
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(10px); }

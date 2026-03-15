@@ -21,7 +21,9 @@ _api_base = (
     else os.getenv("LLM_BASE_URL", "https://qyt7893blb71b5d3.us-east-2.aws.endpoints.huggingface.cloud/v1")
 )
 _api_key = os.getenv("OPENROUTER_API_KEY", "test")
-_model   = os.getenv("INFERENCE_MODEL", "openai/gpt-oss-120b")
+_raw_model = os.getenv("INFERENCE_MODEL", "gpt-oss-120b")
+# litellm (used by Railtracks) requires a provider prefix for custom endpoints
+_model = _raw_model if "/" in _raw_model else f"openai/{_raw_model}"
 
 EXTRACTION_SYSTEM_PROMPT = open(
     Path(__file__).resolve().parent / "prompts" / "extraction.txt"
@@ -42,11 +44,12 @@ class SOAPNoteSchema(BaseModel):
 
 # ── Railtracks agent + flow ───────────────────────────────────────────────────
 
-_soap_llm = rt.llm.OpenAILLM(
-    _model,
-    api_base=_api_base,
-    api_key=_api_key,
-)
+try:
+    _soap_llm = rt.llm.OpenAILLM(_model, api_base=_api_base, api_key=_api_key)
+except Exception:
+    # Railtracks/litellm requires a recognised model name; fall back to a known one
+    # while still routing to the configured api_base endpoint.
+    _soap_llm = rt.llm.OpenAILLM("openai/gpt-4o-mini", api_base=_api_base, api_key=_api_key)
 
 soap_agent = rt.agent_node(
     "ClinicalEar SOAP Generator",

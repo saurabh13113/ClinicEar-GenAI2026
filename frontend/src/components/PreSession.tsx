@@ -145,7 +145,7 @@ export default function PreSession({ onStart }: PreSessionProps) {
               stroke="#1d4ed8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <span style={{ fontSize: '13px', fontWeight: 700, color: '#E8F0FF', letterSpacing: '-0.3px' }}>
-            ClinicalEar
+            ClinicEar
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

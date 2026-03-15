@@ -1,6 +1,9 @@
-# ClinicalEar — AI Clinical Note Generator
-
+# ClinicEar — AI Clinical Note Generator
 GenAI Genesis 2026 | Sun Life + IBM Tracks
+
+## What It Does
+
+## Key Features
 
 ## Quick Start
 
@@ -23,3 +26,13 @@ npm run dev                 # runs on http://localhost:5173
 - `OPENAI_API_KEY` — for Whisper transcription
 - `ANTHROPIC_API_KEY` — for Claude SOAP note generation
 - `IBM_WATSONX_API_KEY` + `IBM_WATSONX_PROJECT_ID` — optional, falls back to Claude audit
+
+## How to Use
+
+## Requirements
+
+## Built With
+
+
+
+

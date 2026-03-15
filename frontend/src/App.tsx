@@ -1,11 +1,15 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { FileText, FileHeart } from 'lucide-react';
 import ControlBar from './components/ControlBar';
 import TranscriptPanel from './components/TranscriptPanel';
 import SOAPNotePanel from './components/SOAPNotePanel';
+import PatientSummaryPanel from './components/PatientSummaryPanel';
 import AuditPanel from './components/AuditPanel';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useSessionTimer } from './hooks/useSessionTimer';
 import type { SessionStatus, TranscriptLine, SOAPNote, AuditResult } from './types';
+import { supabase } from './supabase';
+
 
 const API = import.meta.env.VITE_API_URL || '/api';
 
@@ -30,24 +34,89 @@ function blobToBase64(blob: Blob): Promise<string> {
     const reader = new FileReader();
     reader.onloadend = () => {
       const result = reader.result as string;
-      resolve(result.split(',')[1]); // strip data:...;base64,
+      resolve(result.split(',')[1]);
     };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
 }
 
+
+type RightTab = 'soap' | 'patient';
+
+function normalizeTranscriptText(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeAuditResult(payload: unknown): AuditResult | null {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const data = payload as Record<string, unknown>;
+  const quality = Number(data.quality_score);
+  const completeness = Number(data.completeness_score);
+
+  if (!Number.isFinite(quality) || !Number.isFinite(completeness)) {
+    return null;
+  }
+
+  return {
+    quality_score: Math.max(0, Math.min(100, Math.round(quality))),
+    completeness_score: Math.max(0, Math.min(100, Math.round(completeness))),
+    flagged_terms: Array.isArray(data.flagged_terms)
+      ? data.flagged_terms.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+      : [],
+    consistency_notes: typeof data.consistency_notes === 'string' ? data.consistency_notes : '',
+  };
+}
+
+function getRealtimeWsUrl() {
+  const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+
+  if (apiUrl && /^https?:\/\//.test(apiUrl)) {
+    const wsBase = apiUrl.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+    return `${wsBase}/ws/realtime-transcript`;
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.host}/ws/realtime-transcript`;
+}
+
+
 export default function App() {
-  const [status, setStatus] = useState<SessionStatus>('idle');
-  const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
-  const [note, setNote] = useState<SOAPNote | null>(null);
-  const [audit, setAudit] = useState<AuditResult | null>(null);
+  const [status, setStatus]           = useState<SessionStatus>('idle');
+  const [transcript, setTranscript]   = useState<TranscriptLine[]>([]);
+  const [note, setNote]               = useState<SOAPNote | null>(null);
+  const [audit, setAudit]             = useState<AuditResult | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]             = useState<string | null>(null);
+  const [rightTab, setRightTab]       = useState<RightTab>('soap');
 
   const demoIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const realtimeWsRef = useRef<WebSocket | null>(null);
+  const partialLineIdRef = useRef<string | null>(null);
+  const recordingStartMsRef = useRef<number>(0);
+  const transcriptRef = useRef<TranscriptLine[]>([]);
+  const lastCommittedRef = useRef<{ text: string; atMs: number } | null>(null);
+
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const timer = useSessionTimer();
+
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(() => {
+    return () => {
+      if (realtimeWsRef.current) {
+        realtimeWsRef.current.close();
+        realtimeWsRef.current = null;
+      }
+    };
+  }, []);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,18 +124,184 @@ export default function App() {
     setTranscript((prev) => [...prev, { ...line, id: `${Date.now()}-${Math.random()}` }]);
   }, []);
 
+  const getNextSpeaker = useCallback((lines: TranscriptLine[]): 'Doctor' | 'Patient' => {
+    const lastFinal = [...lines].reverse().find((line) => !line.id.startsWith('partial-'));
+    if (!lastFinal) return 'Doctor';
+    return lastFinal.speaker === 'Doctor' ? 'Patient' : 'Doctor';
+  }, []);
+
+  const upsertPartialLine = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const normalizedIncoming = normalizeTranscriptText(trimmed);
+    if (!normalizedIncoming) return;
+
+    setTranscript((prev) => {
+      const lastFinalLine = [...prev].reverse().find((line) => !line.id.startsWith('partial-'));
+      if (lastFinalLine) {
+        const normalizedLastFinal = normalizeTranscriptText(lastFinalLine.text);
+        if (
+          normalizedIncoming === normalizedLastFinal ||
+          normalizedIncoming.startsWith(normalizedLastFinal) ||
+          normalizedLastFinal.startsWith(normalizedIncoming)
+        ) {
+          return prev;
+        }
+      }
+
+      const lastCommitted = lastCommittedRef.current;
+      if (lastCommitted) {
+        const normalizedLastCommitted = normalizeTranscriptText(lastCommitted.text);
+        const isNearInTime = Date.now() - lastCommitted.atMs < 8000;
+        if (
+          isNearInTime && (
+            normalizedIncoming === normalizedLastCommitted ||
+            normalizedIncoming.startsWith(normalizedLastCommitted) ||
+            normalizedLastCommitted.startsWith(normalizedIncoming)
+          )
+        ) {
+          return prev;
+        }
+      }
+
+      const existingId = partialLineIdRef.current;
+      const existingPartial = existingId ? prev.find((line) => line.id === existingId) : undefined;
+
+      const stableLines = prev.filter((line) => !line.id.startsWith('partial-'));
+      const partialId = existingId || `partial-${Date.now()}-${Math.random()}`;
+      partialLineIdRef.current = partialId;
+
+      const speaker = existingPartial?.speaker === 'Doctor' || existingPartial?.speaker === 'Patient'
+        ? existingPartial.speaker
+        : getNextSpeaker(stableLines);
+
+      const partialLine: TranscriptLine = {
+        id: partialId,
+        speaker,
+        text: trimmed,
+        timestamp: Date.now() - recordingStartMsRef.current,
+      };
+
+      return [...stableLines, partialLine];
+    });
+  }, [getNextSpeaker]);
+
+  const commitLiveLine = useCallback((text: string, timestampMs?: number) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const normalizedIncoming = normalizeTranscriptText(trimmed);
+    if (!normalizedIncoming) return;
+    const now = Date.now();
+    const lastCommitted = lastCommittedRef.current;
+
+    if (lastCommitted && lastCommitted.text === normalizedIncoming && now - lastCommitted.atMs < 4000) {
+      setTranscript((prev) => {
+        const withoutPartial = prev.filter((line) => !line.id.startsWith('partial-'));
+        partialLineIdRef.current = null;
+        return withoutPartial;
+      });
+      return;
+    }
+
+    let didAppend = false;
+
+    setTranscript((prev) => {
+      const existingPartial = partialLineIdRef.current
+        ? prev.find((line) => line.id === partialLineIdRef.current)
+        : undefined;
+
+      const withoutPartial = prev.filter((line) => !line.id.startsWith('partial-'));
+
+      const speaker = existingPartial?.speaker === 'Doctor' || existingPartial?.speaker === 'Patient'
+        ? existingPartial.speaker
+        : getNextSpeaker(withoutPartial);
+
+      const lastFinalLine = [...withoutPartial].reverse().find((line) => !line.id.startsWith('partial-'));
+      if (lastFinalLine) {
+        const normalizedLast = normalizeTranscriptText(lastFinalLine.text);
+        if (normalizedLast === normalizedIncoming) {
+          partialLineIdRef.current = null;
+          return withoutPartial;
+        }
+      }
+
+      partialLineIdRef.current = null;
+      didAppend = true;
+
+      return [
+        ...withoutPartial,
+        {
+          id: `${Date.now()}-${Math.random()}`,
+          speaker,
+          text: trimmed,
+          timestamp: typeof timestampMs === 'number' ? timestampMs : Date.now() - recordingStartMsRef.current,
+        },
+      ];
+    });
+
+    if (didAppend) {
+      lastCommittedRef.current = { text: normalizedIncoming, atMs: now };
+    }
+  }, [getNextSpeaker]);
+
+  const connectRealtimeTranscriptSocket = useCallback(async () => {
+    if (realtimeWsRef.current) {
+      realtimeWsRef.current.close();
+      realtimeWsRef.current = null;
+    }
+
+    const wsUrl = getRealtimeWsUrl();
+
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(wsUrl);
+      realtimeWsRef.current = ws;
+
+      ws.onopen = () => resolve();
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as {
+            type?: string;
+            text?: string;
+            timestamp_ms?: number;
+            message?: string;
+          };
+
+          if (msg.type === 'partial' && msg.text) {
+            upsertPartialLine(msg.text);
+          } else if (msg.type === 'committed' && msg.text) {
+            commitLiveLine(msg.text, msg.timestamp_ms);
+          } else if (msg.type === 'error') {
+            setError(msg.message || 'Realtime transcription failed');
+          }
+        } catch {
+          // Ignore malformed websocket messages
+        }
+      };
+
+      ws.onerror = () => reject(new Error('Could not connect to realtime transcription service'));
+      ws.onclose = () => {
+        if (realtimeWsRef.current === ws) realtimeWsRef.current = null;
+      };
+    });
+  }, [commitLiveLine, upsertPartialLine]);
+
   const generateNoteFromTranscript = useCallback(async (lines: TranscriptLine[]) => {
     setStatus('processing');
-    const fullText = lines
-      .map((l) => `${l.speaker}: ${l.text}`)
-      .join('\n');
+    const fullText = lines.map((l) => `${l.speaker}: ${l.text}`).join('\n');
+
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
 
     try {
-      const res = await fetch(`${API}/generate-note`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: fullText }),
-      });
+        const res = await fetch(`${API}/generate-note`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({ transcript: fullText }),
+        });
 
       if (!res.ok) throw new Error(`Note generation failed: ${res.statusText}`);
       const soapNote: SOAPNote = await res.json();
@@ -82,12 +317,31 @@ export default function App() {
 
       fetch(`${API}/audit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({ soap_note: noteText }),
       })
-        .then((r) => r.json())
-        .then((a: AuditResult) => setAudit(a))
-        .catch(console.error)
+        .then(async (r) => {
+          const payload = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            const detail = typeof payload?.detail === 'string' ? payload.detail : `status ${r.status}`;
+            throw new Error(`Audit failed (${detail})`);
+          }
+
+          const normalized = normalizeAuditResult(payload);
+          if (!normalized) {
+            throw new Error('Audit returned invalid payload');
+          }
+
+          setAudit(normalized);
+        })
+        .catch((err) => {
+          console.error(err);
+          setError(err instanceof Error ? err.message : 'Audit failed');
+          setAudit(null);
+        })
         .finally(() => setAuditLoading(false));
 
     } catch (err) {
@@ -104,12 +358,12 @@ export default function App() {
     setNote(null);
     setAudit(null);
     setError(null);
+    setRightTab('soap');
     timer.start();
 
     let i = 0;
     const scheduleNext = () => {
       if (i >= DEMO_TRANSCRIPT_LINES.length) {
-        // Auto-end after last line
         setTimeout(() => {
           timer.stop();
           generateNoteFromTranscript(
@@ -139,70 +393,119 @@ export default function App() {
     setAudit(null);
     setError(null);
 
-    await startRecording();
+    setRightTab('soap');
+
+    partialLineIdRef.current = null;
+    lastCommittedRef.current = null;
+    recordingStartMsRef.current = Date.now();
+
+    await connectRealtimeTranscriptSocket();
+
+    await startRecording({
+      onChunk: async (chunk) => {
+        if (!realtimeWsRef.current || realtimeWsRef.current.readyState !== WebSocket.OPEN) return;
+        realtimeWsRef.current.send(JSON.stringify({
+          type: 'audio_chunk',
+          audio_base64: chunk.base64,
+        }));
+      },
+    });
+
+
     setStatus('recording');
     timer.start();
-  }, [startRecording, timer]);
+  }, [connectRealtimeTranscriptSocket, startRecording, timer]);
 
   const endSession = useCallback(async () => {
     timer.stop();
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
 
     if (isRecording) {
       const blob = await stopRecording();
+
+      if (realtimeWsRef.current && realtimeWsRef.current.readyState === WebSocket.OPEN) {
+        realtimeWsRef.current.send(JSON.stringify({ type: 'commit' }));
+        realtimeWsRef.current.send(JSON.stringify({ type: 'stop' }));
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 900));
+
+      if (realtimeWsRef.current) {
+        realtimeWsRef.current.close();
+        realtimeWsRef.current = null;
+      }
+
+      const liveLines = transcriptRef.current.filter((line) => !line.id.startsWith('partial-'));
+
       if (blob) {
-        setStatus('processing');
-        try {
-          const b64 = await blobToBase64(blob);
-          const res = await fetch(`${API}/transcribe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
-          });
+        if (liveLines.length > 0) {
+          setTranscript(liveLines);
+          await generateNoteFromTranscript(liveLines);
+        } else {
+          setStatus('processing');
+          try {
+            const b64 = await blobToBase64(blob);
+            const res = await fetch(`${API}/transcribe`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+              body: JSON.stringify({ audio_base64: b64, filename: 'audio.webm' }),
+            });
 
-          if (!res.ok) throw new Error('Transcription failed');
-          const { transcript: raw }: { transcript: string } = await res.json();
+            if (!res.ok) throw new Error('Transcription failed');
+            const { transcript: raw }: { transcript: string } = await res.json();
 
-          // Split into lines (basic heuristic — no real diarization for MVP)
-          const lines: TranscriptLine[] = raw
-            .split(/[.!?]+/)
-            .filter((s) => s.trim().length > 0)
-            .map((s, idx) => ({
-              id: String(idx),
-              speaker: idx % 2 === 0 ? 'Doctor' : 'Patient',
-              text: s.trim(),
-              timestamp: idx * 3000,
-            }));
+            const lines: TranscriptLine[] = raw
+              .split(/[.!?]+/)
+              .filter((s) => s.trim().length > 0)
+              .map((s, idx) => ({
+                id: String(idx),
+                speaker: idx % 2 === 0 ? 'Doctor' : 'Patient',
+                text: s.trim(),
+                timestamp: idx * 3000,
+              }));
 
-          setTranscript(lines);
-          await generateNoteFromTranscript(lines);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Transcription error');
-          setStatus('done');
+            setTranscript(lines);
+            await generateNoteFromTranscript(lines);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Transcription error');
+            setStatus('done');
+          }
         }
       }
     } else {
-      // Demo mode — use existing transcript
       await generateNoteFromTranscript(transcript);
     }
   }, [isRecording, stopRecording, transcript, generateNoteFromTranscript, timer]);
 
   const reset = useCallback(() => {
     if (demoIntervalRef.current) clearTimeout(demoIntervalRef.current);
+    if (realtimeWsRef.current) {
+      realtimeWsRef.current.close();
+      realtimeWsRef.current = null;
+    }
+    partialLineIdRef.current = null;
+    lastCommittedRef.current = null;
     setStatus('idle');
     setTranscript([]);
     setNote(null);
     setAudit(null);
     setError(null);
+    setRightTab('soap');
     timer.reset();
   }, [timer]);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-screen" style={{ background: '#F0F2F7', fontFamily: 'Sora, sans-serif' }}>
+    <div className="flex flex-col h-screen" style={{ background: '#050C1A', fontFamily: 'Sora, sans-serif' }}>
       <ControlBar
         status={status}
         timerFormatted={timer.formatted}
+        turnCount={transcript.length}
         onStartLive={startLive}
         onStartDemo={startDemo}
         onEnd={endSession}
@@ -211,24 +514,88 @@ export default function App() {
 
       {/* Error banner */}
       {error && (
-        <div className="px-5 py-2 text-xs font-semibold flex items-center gap-2" style={{ background: '#FEF2F2', borderBottom: '1px solid #FECACA', color: '#B91C1C' }}>
+        <div
+          className="px-5 py-2 text-xs font-semibold flex items-center gap-2"
+          style={{
+            background: 'rgba(239,68,68,0.08)',
+            borderBottom: '1px solid rgba(239,68,68,0.2)',
+            color: '#FCA5A5',
+          }}
+        >
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
           {error}
         </div>
       )}
 
       {/* Main panels */}
-      <div className="flex flex-1 overflow-hidden gap-px" style={{ background: '#E2E6EF', padding: '0' }}>
+      <div
+        className="flex flex-1 overflow-hidden"
+        style={{ gap: '1px', background: 'rgba(255,255,255,0.04)' }}
+      >
         {/* Left: Transcript */}
         <div className="w-[44%] flex flex-col overflow-hidden">
           <TranscriptPanel lines={transcript} status={status} />
         </div>
 
-        {/* Right: SOAP Note + Audit */}
+        {/* Right: Tab panel + Audit */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-hidden">
-            <SOAPNotePanel note={note} status={status} />
+
+          {/* Tab bar */}
+          <div
+            className="shrink-0 flex items-center gap-1 px-4"
+            style={{
+              background: '#0A1628',
+              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              height: '44px',
+            }}
+          >
+            <button
+              onClick={() => setRightTab('soap')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
+              style={
+                rightTab === 'soap'
+                  ? { background: 'rgba(29,78,216,0.14)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.28)' }
+                  : { background: 'transparent', color: '#2E4A66', border: '1px solid transparent' }
+              }
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Clinical Note
+            </button>
+
+            <button
+              onClick={() => setRightTab('patient')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
+              style={
+                rightTab === 'patient'
+                  ? { background: 'rgba(244,114,182,0.1)', color: '#F9A8D4', border: '1px solid rgba(244,114,182,0.22)' }
+                  : { background: 'transparent', color: '#2E4A66', border: '1px solid transparent' }
+              }
+            >
+              <FileHeart className="w-3.5 h-3.5" />
+              Patient Summary
+            </button>
+
+            {/* Note ready indicator */}
+            {note && (
+              <span
+                className="ml-auto text-[10px] font-semibold px-2 py-1 rounded-full"
+                style={{ background: 'rgba(16,185,129,0.1)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.18)' }}
+              >
+                Note ready
+              </span>
+            )}
           </div>
+
+          {/* Panel content */}
+          <div className="flex-1 overflow-hidden">
+            {rightTab === 'soap' ? (
+              <SOAPNotePanel note={note} status={status} />
+            ) : (
+              <PatientSummaryPanel note={note} status={status} />
+            )}
+          </div>
+
+          {/* Audit strip — always visible */}
           <AuditPanel audit={audit} isLoading={auditLoading} />
         </div>
       </div>

@@ -241,6 +241,7 @@ const generatePDF = async (output: 'preview' | 'base64' = 'preview') => {
 
   const handleEmail = async () => {
     if (!note || !email) return;
+    setIsEmailed(true);
     const pdfBase64 = await generatePDF('base64') as string;
     const base64Content = pdfBase64.replace(/^data:.+;base64,/, '');
     await fetch('http://localhost:8000/api/send-appointment-summary', {
@@ -251,8 +252,6 @@ const generatePDF = async (output: 'preview' | 'base64' = 'preview') => {
         pdf_base64: base64Content,
       }),
     });
-    setIsEmailed(true);
-    setTimeout(() => setIsEmailed(false), 2000);
   };
 
   return (
@@ -318,10 +317,11 @@ const generatePDF = async (output: 'preview' | 'base64' = 'preview') => {
                 </div>
                 <button
                   onClick={handleEmail}
+                  disabled={emailed}
                   className="flex items-center gap-1.5 text-[10px] font-semibold px-3 py-1 rounded tracking-wide"
                   style={
                     emailed
-                      ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }
+                      ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)', opacity: 0.6, cursor: 'not-allowed' }
                       : { background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }
                   }
                 >

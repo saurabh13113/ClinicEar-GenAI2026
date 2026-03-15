@@ -10,27 +10,23 @@ import wave
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.parse import urlparse
+from typing import Optional
 
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer
-from supabase import create_client
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import anthropic
 import openai
 import httpx
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+load_dotenv()
 
 app = FastAPI(title="ClinicalEar API")
 
-ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:5174,http://localhost:3000,"
-    "https://frontend-delta-ochre-79.vercel.app",
-).split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,34 +36,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Whisper transcription — uses Groq (free) if GROQ_API_KEY is set, else OpenAI
-_groq_key = os.getenv("GROQ_API_KEY")
-_openai_key = os.getenv("OPENAI_API_KEY")
-if _groq_key:
-    WHISPER_MODEL = "whisper-large-v3-turbo"
-    openai_client = openai.OpenAI(
-        api_key=_groq_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
-else:
-    WHISPER_MODEL = "whisper-1"
-    openai_client = openai.OpenAI(api_key=_openai_key)
-
-# SOAP note generation + audit — free hackathon GPT-OSS 120B server
-# Fallback: set OPENROUTER_API_KEY to use OpenRouter instead
-_use_openrouter = bool(os.getenv("OPENROUTER_API_KEY"))
-INFERENCE_MODEL = os.getenv("INFERENCE_MODEL", "openai/gpt-oss-120b")
-openrouter_client = openai.OpenAI(
-    base_url=(
-        "https://openrouter.ai/api/v1"
-        if _use_openrouter
-        else "https://vjioo4r1vyvcozuj.us-east-2.aws.endpoints.huggingface.cloud/v1"
-    ),
-    api_key=os.getenv("OPENROUTER_API_KEY", "test"),
-)
-
-security = HTTPBearer()
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -463,21 +433,37 @@ def _reconcile_segments_with_diarization(
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
-EXTRACTION_SYSTEM_PROMPT = open("prompts/extraction.txt").read()
-AUDIT_SYSTEM_PROMPT = open("prompts/audit.txt").read()
+EXTRACTION_SYSTEM_PROMPT = """You are a clinical documentation AI. Given a doctor-patient conversation transcript,
+extract structured clinical information and return ONLY valid JSON — no markdown, no explanation.
 
-# ── Auth ──────────────────────────────────────────────────────────────────
+Return this exact JSON schema:
+{
+  "subjective": "patient-reported symptoms paraphrased in clinical language",
+  "objective": "vitals, observations, and measurements mentioned",
+  "assessment": "primary diagnosis or differential diagnoses extracted from physician speech",
+  "plan": "prescribed medications, referrals, follow-ups, lifestyle instructions",
+  "icd10_suggestions": ["ICD-10 code: description", ...],
+  "confidence_scores": {
+    "subjective": 0.0-1.0,
+    "objective": 0.0-1.0,
+    "assessment": 0.0-1.0,
+    "plan": 0.0-1.0
+  },
+  "gaps": ["list of clinically expected fields not mentioned in the conversation"]
+}
 
-def verify_token(token = Depends(security)):
-    user = supabase.auth.get_user(token.credentials)
-    if not user:
-        raise HTTPException(status_code=401)
-    return user
+Rules:
+- Write in clinical register (not layman language, not bullet points)
+- Assign confidence < 0.7 if a section relies on inference rather than explicit mention
+- gaps[] should list things like "blood pressure not recorded", "medication dosage unclear"
+- icd10_suggestions must use real ICD-10 codes
+"""
+
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
+async def transcribe(req: TranscribeRequest):
     """Accepts base64-encoded audio, returns transcript via OpenAI Whisper."""
     try:
         audio_bytes = base64.b64decode(req.audio_base64)
@@ -489,7 +475,7 @@ async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
 
         with open(tmp_path, "rb") as audio_file:
             result = openai_client.audio.transcriptions.create(
-                model=WHISPER_MODEL,
+                model="whisper-1",
                 file=audio_file,
                 response_format="text",
             )
@@ -502,96 +488,63 @@ async def transcribe(req: TranscribeRequest, user = Depends(verify_token)):
 
 
 @app.post("/generate-note", response_model=SOAPNote)
-async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
+async def generate_note(req: GenerateNoteRequest):
     """Accepts transcript, returns structured SOAP note via Claude."""
     try:
-        response = openrouter_client.chat.completions.create(
-            model=INFERENCE_MODEL,
+        message = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
             max_tokens=2048,
+            system=EXTRACTION_SYSTEM_PROMPT,
             messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}",
-                },
+                }
             ],
         )
 
-        raw = strip_fences(extract_text(response))
+        raw = message.content[0].text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
         data = json.loads(raw)
-
-        supabase.table("consultations").insert({
-            "created_by": user.user.id,
-            "soap": data,
-        }).execute()
-        
         return SOAPNote(**data)
 
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Model returned invalid JSON: {e}")
+        raise HTTPException(status_code=500, detail=f"Claude returned invalid JSON: {e}")
     except Exception as e:
-        print(f"Error in /generate-note: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/audit", response_model=AuditResponse)
-async def audit_note(req: AuditRequest, user = Depends(verify_token)):
+async def audit_note(req: AuditRequest):
     """Sends SOAP note to IBM watsonx.ai for quality scoring (or Claude fallback)."""
     try:
-        ibm_enabled = _env_flag("IBM_WATSONX_ENABLED", default=True)
-        debug_ibm_errors = _env_flag("DEBUG_IBM_WATSONX_ERRORS", default=False)
-        ibm_api_key = (os.getenv("IBM_WATSONX_API_KEY") or "").strip()
-        ibm_project_id = (os.getenv("IBM_WATSONX_PROJECT_ID") or "").strip()
-        ibm_url = (os.getenv("IBM_WATSONX_URL") or "https://us-south.ml.cloud.ibm.com").strip().rstrip("/")
+        ibm_api_key = os.getenv("IBM_WATSONX_API_KEY")
+        ibm_project_id = os.getenv("IBM_WATSONX_PROJECT_ID")
 
-        missing_reasons: list[str] = []
-        if not ibm_enabled:
-            missing_reasons.append("IBM_WATSONX_ENABLED=false")
-        if not ibm_api_key:
-            missing_reasons.append("missing IBM_WATSONX_API_KEY")
-        if not ibm_project_id:
-            missing_reasons.append("missing IBM_WATSONX_PROJECT_ID")
-        if not _is_valid_url(ibm_url):
-            missing_reasons.append("invalid IBM_WATSONX_URL")
-
-        if not missing_reasons:
-            try:
-                print("Attempting audit with IBM WatsonX...")
-                return await _audit_with_watsonx(req.soap_note, ibm_api_key, ibm_project_id, ibm_url)
-            except Exception as ibm_err:
-                if debug_ibm_errors:
-                    print(f"IBM WatsonX audit failed ({ibm_err}), falling back to inference server")
-                else:
-                    print("IBM WatsonX audit unavailable; falling back to inference server")
-                return await _audit_with_openrouter_fallback(req.soap_note)
+        if ibm_api_key and ibm_project_id:
+            return await _audit_with_watsonx(req.soap_note, ibm_api_key, ibm_project_id)
         else:
-            print(
-                "IBM WatsonX audit not configured properly "
-                f"({', '.join(missing_reasons)}), using inference server fallback"
-            )
-            return await _audit_with_openrouter_fallback(req.soap_note)
+            return await _audit_with_claude_fallback(req.soap_note)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _audit_with_watsonx(note: str, api_key: str, project_id: str, url: str) -> AuditResponse:
+async def _audit_with_watsonx(note: str, api_key: str, project_id: str) -> AuditResponse:
     from ibm_watsonx_ai import APIClient, Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
 
-    credentials_kwargs = {
-        "url": url,
-        "api_key": api_key,
-    }
-    instance_id = (os.getenv("IBM_WATSONX_INSTANCE_ID") or "").strip()
-    if instance_id:
-        credentials_kwargs["instance_id"] = instance_id
-
-    credentials = Credentials(**credentials_kwargs)
+    credentials = Credentials(
+        url=os.getenv("IBM_WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
+        api_key=api_key,
+    )
     client = APIClient(credentials)
-
     model = ModelInference(
-        model_id="meta-llama/llama-3-3-70b-instruct",
+        model_id="ibm/granite-13b-instruct-v2",
         api_client=client,
         project_id=project_id,
         params={"max_new_tokens": 512, "temperature": 0.1},
@@ -609,64 +562,39 @@ SOAP Note:
 {note}"""
 
     response = model.generate_text(prompt=prompt)
-    data = parse_first_json_object(
-        response.strip(),
-        preferred_keys={"quality_score", "completeness_score", "flagged_terms", "consistency_notes"},
-    )
-    return _coerce_audit_response(data)
+    raw = response.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    data = json.loads(raw)
+    return AuditResponse(**data)
 
 
-def _coerce_audit_response(data: dict) -> AuditResponse:
-    quality_score = int(data.get("quality_score", 0))
-    quality_score = max(0, min(100, quality_score))
+async def _audit_with_claude_fallback(note: str) -> AuditResponse:
+    """Use Claude as fallback auditor when IBM credentials not available."""
+    audit_prompt = """You are a clinical documentation auditor. Audit this SOAP note and return ONLY valid JSON:
+{
+  "quality_score": 0-100,
+  "completeness_score": 0-100,
+  "flagged_terms": ["list of non-standard abbreviations or unclear medical terms"],
+  "consistency_notes": "brief assessment of plan/assessment alignment"
+}"""
 
-    completeness_raw = data.get("completeness_score", quality_score)
-    completeness_score = int(completeness_raw)
-    completeness_score = max(0, min(100, completeness_score))
-
-    flagged_terms = data.get("flagged_terms") or []
-    if not isinstance(flagged_terms, list):
-        flagged_terms = []
-    flagged_terms = [str(term) for term in flagged_terms if str(term).strip()]
-
-    consistency_notes = str(data.get("consistency_notes", "")).strip()
-
-    return AuditResponse(
-        quality_score=quality_score,
-        completeness_score=completeness_score,
-        flagged_terms=flagged_terms,
-        consistency_notes=consistency_notes,
+    message = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=512,
+        system=audit_prompt,
+        messages=[{"role": "user", "content": f"Audit this SOAP note:\n\n{note}"}],
     )
 
-
-async def _audit_with_openrouter_fallback(note: str) -> AuditResponse:
-    response = openrouter_client.chat.completions.create(
-        model=INFERENCE_MODEL,
-        max_tokens=768,
-        messages=[
-            {"role": "system", "content": AUDIT_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    "Return ONLY valid JSON with this exact schema:\n"
-                    "{\n"
-                    "  \"quality_score\": 0-100,\n"
-                    "  \"completeness_score\": 0-100,\n"
-                    "  \"flagged_terms\": [\"term\"],\n"
-                    "  \"consistency_notes\": \"brief note on alignment\"\n"
-                    "}\n\n"
-                    "SOAP Note:\n"
-                    f"{note}"
-                ),
-            },
-        ],
-    )
-
-    data = parse_first_json_object(
-        extract_text(response),
-        preferred_keys={"quality_score", "completeness_score", "flagged_terms", "consistency_notes"},
-    )
-    return _coerce_audit_response(data)
+    raw = message.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    data = json.loads(raw)
+    return AuditResponse(**data)
 
 
 @app.post("/reconcile-speakers", response_model=ReconcileSpeakersResponse)
@@ -841,14 +769,7 @@ async def _run_batch_diarization_file(
 async def websocket_realtime_transcript(websocket: WebSocket):
     await websocket.accept()
 
-    elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
-    if not elevenlabs_api_key:
-        await websocket.send_json({
-            "type": "error",
-            "message": "Missing ELEVENLABS_API_KEY in backend environment",
-        })
-        await websocket.close(code=1011)
-        return
+active_connections: list[WebSocket] = []
 
     elevenlabs_url = _build_elevenlabs_realtime_url()
     pcm_timeline = bytearray()
@@ -961,6 +882,10 @@ async def websocket_realtime_transcript(websocket: WebSocket):
             finally:
                 resolution_queue.task_done()
 
+@app.websocket("/ws/transcript")
+async def websocket_transcript(websocket: WebSocket):
+    await websocket.accept()
+    active_connections.append(websocket)
     try:
         async with websockets.connect(
             elevenlabs_url,

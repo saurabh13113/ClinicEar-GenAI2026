@@ -181,7 +181,7 @@ export default function ControlBar({
                         {patient.health_num}
                     </span>
                 </button>
-              <button
+              {/* <button
                 onClick={onStartDemo}
                 className="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl transition-all duration-150"
                 style={{ background: 'rgba(255,255,255,0.05)', color: '#3D5878', border: '1px solid rgba(255,255,255,0.08)' }}
@@ -190,7 +190,7 @@ export default function ControlBar({
               >
                 <Play className="w-3.5 h-3.5" />
                 Demo Mode
-              </button>
+              </button> */}
               <button
                 onClick={onStartLive}
                 className="flex items-center gap-2 px-5 py-2 text-xs font-bold text-white rounded-xl transition-all duration-150"

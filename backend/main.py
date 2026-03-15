@@ -11,7 +11,14 @@ from urllib.parse import urlencode
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
-from agents import soap_flow, SOAPNoteSchema
+try:
+    from agents import soap_flow, SOAPNoteSchema
+    _railtracks_available = True
+except Exception as _rt_import_err:
+    print(f"Railtracks unavailable, will use direct LLM calls: {_rt_import_err}")
+    soap_flow = None  # type: ignore
+    SOAPNoteSchema = None  # type: ignore
+    _railtracks_available = False
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from supabase import create_client
@@ -495,24 +502,49 @@ async def search_patients(q: str, user = Depends(verify_token)):
 
 @app.post("/generate-note", response_model=SOAPNote)
 async def generate_note(req: GenerateNoteRequest, user = Depends(verify_token)):
-    """Accepts transcript, returns structured SOAP note via Railtracks."""
-    try:
-        result: SOAPNoteSchema = await soap_flow.ainvoke(
-            f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}"
-        )
-        data = result.model_dump()
+    """Accepts transcript, returns structured SOAP note (via Railtracks with direct LLM fallback)."""
+    data = None
 
-        supabase.table("consultations").insert({
-            "created_by": user.user.id,
-            "patient_id": req.patient_id,
-            "soap": data,
-        }).execute()
+    # ── Primary: Railtracks flow ──────────────────────────────────────────────
+    if _railtracks_available:
+        try:
+            result = await soap_flow.ainvoke(
+                f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}"
+            )
+            if hasattr(result, "model_dump"):
+                data = result.model_dump()
+            elif isinstance(result, dict):
+                data = result
+            else:
+                data = json.loads(strip_fences(str(result)))
+        except Exception as rt_err:
+            print(f"Railtracks flow failed ({rt_err}), falling back to direct LLM call")
 
-        return SOAPNote(**data)
+    # ── Fallback: direct OpenRouter call ─────────────────────────────────────
+    if data is None:
+        try:
+            response = openrouter_client.chat.completions.create(
+                model=INFERENCE_MODEL,
+                max_tokens=2048,
+                messages=[
+                    {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Generate a SOAP note from this consultation transcript:\n\n{req.transcript}"},
+                ],
+            )
+            data = json.loads(strip_fences(extract_text(response)))
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"Model returned invalid JSON: {e}")
+        except Exception as e:
+            print(f"Error in /generate-note: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
-    except Exception as e:
-        print(f"Error in /generate-note: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    supabase.table("consultations").insert({
+        "created_by": user.user.id,
+        "patient_id": req.patient_id,
+        "soap": data,
+    }).execute()
+
+    return SOAPNote(**data)
 
 
 @app.post("/audit", response_model=AuditResponse)

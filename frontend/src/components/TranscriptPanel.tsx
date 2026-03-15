@@ -34,7 +34,7 @@ function AudioWaveform({ paused = false, color = '#3B82F6', height = 32 }: { pau
 export default function TranscriptPanel({ lines, status, patient }: TranscriptPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const isRecording = status === 'recording';
-  const patientLabel = `Patient(${patient.first_name}, ${patient.last_name})`;
+  const patientLabel = `Patient (${patient.first_name}, ${patient.last_name})`;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });

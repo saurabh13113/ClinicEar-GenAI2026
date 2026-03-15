@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ClipboardCopy, Check, AlertTriangle, Loader2, FileText, User, Calendar, Hash } from 'lucide-react';
 import type { SOAPNote, SessionStatus, Patient } from '../types';
+import jsPDF from 'jspdf';
 
 interface SOAPNotePanelProps {
   note: SOAPNote | null;
@@ -75,6 +76,8 @@ function todayStr() {
 
 export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelProps) {
   const [copied, setCopied] = useState(false);
+  const email = "wacotoc291@niprack.com";
+  const [emailed, setIsEmailed] = useState(false)
 
   const handleCopy = async () => {
     if (!note) return;
@@ -82,6 +85,74 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const generatePDF = (output: 'preview' | 'base64' = 'preview') => {
+    if (!note) return '';
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // ── Header ──
+    doc.setFillColor(41, 98, 255);
+    doc.rect(0, 0, pageWidth, 35, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text('SOAP Note', pageWidth / 2, 20, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Generated on ${new Date().toLocaleDateString()}`, pageWidth / 2, 29, { align: 'center' });
+
+    // ── Sections ──
+    let y = 50;
+    doc.setTextColor(30, 30, 30);
+    SECTIONS.forEach(({ label, key }) => {
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(41, 98, 255);
+      doc.text(label, 14, y);
+      doc.setDrawColor(41, 98, 255);
+      doc.setLineWidth(0.5);
+      doc.line(14, y + 3, pageWidth - 14, y + 3);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setCharSpace(0);
+      const split = doc.splitTextToSize(note[key] || 'N/A', pageWidth - 28);
+      doc.text(split, 14, y + 12);
+      y += 12 + split.length * 7 + 10;
+      if (y > 260) {
+        doc.addPage();
+        y = 20;
+      }
+    });
+
+    // ── Footer ──
+    doc.setFontSize(9);
+    doc.setTextColor(150);
+    doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 285);
+
+    // ── Output ──
+    if (output === 'preview') {
+      window.open(doc.output('bloburl'), '_blank');
+      return '';
+    }
+    return doc.output('datauristring');
+  };
+
+  const handleEmail = async () => {
+    if (!note || !email) return;
+    const pdfBase64 = generatePDF('base64') as string;
+    const base64Content = pdfBase64.replace(/^data:.+;base64,/, '');
+    await fetch('http://localhost:8000/api/send-appointment-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        patient_email: email,
+        pdf_base64: base64Content,
+      }),
+    });
+    setIsEmailed(true);
+    setTimeout(() => setIsEmailed(false), 2000);
   };
 
   return (
@@ -108,16 +179,16 @@ export default function SOAPNotePanel({ note, status, patient }: SOAPNotePanelPr
         </div>
         {note && (
           <button
-            onClick={handleCopy}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150"
+            onClick={handleEmail} // was handleCopy, changed to generatePDF
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150"
             style={
-              copied
+              emailed
                 ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }
                 : { background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }
             }
           >
-            {copied ? <Check className="w-3.5 h-3.5" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
-            {copied ? 'Copied!' : 'Copy Note'}
+            {emailed ? <Check className="w-3.5 h-3.5" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
+            {emailed ? 'Copied!' : 'Copy Note'}
           </button>
         )}
       </div>

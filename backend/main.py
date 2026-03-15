@@ -524,7 +524,7 @@ async def search_patients(q: str, user = Depends(verify_token)):
 async def translate(data: TranslationRequest):
     client = OpenAI(
         api_key=os.getenv("OPENAI_API_KEY", "test"),
-        base_url="https://vjioo4r1vyvcozuj.us-east-2.aws.endpoints.huggingface.cloud/v1",
+        base_url="https://qyt7893blb71b5d3.us-east-2.aws.endpoints.huggingface.cloud/v1",
     )
     resp = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -788,7 +788,7 @@ async def send_appointment_summary(data: AppointmentEmail):
     resend.api_key = os.environ["RESEND_API_KEY"]
     resend.Emails.send({
         "from": "onboarding@resend.dev",
-        "to": 'fares.alkorani289@gmail.com',
+        "to": 'virpatel71@gmail.com',
         "subject": "Your SOAP Note Summary",
         "html": "<p>Please find your appointment SOAP note attached.</p>",
         "attachments": [

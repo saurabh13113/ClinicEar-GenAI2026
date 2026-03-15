@@ -865,7 +865,7 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
             {rightTab === 'soap' ? (
               <SOAPNotePanel note={note} status={status} patient={patient} showHeader={false} />
             ) : (
-              <PatientSummaryPanel note={note} status={status} />
+              <PatientSummaryPanel note={note} patient={patient} status={status} />
             )}
           </div>
 

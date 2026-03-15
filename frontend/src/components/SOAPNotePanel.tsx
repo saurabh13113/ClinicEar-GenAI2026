@@ -243,14 +243,7 @@ if (patient?.preferred_language) { // covers both null and undefined
                         <button
             onClick={handleEmail} // was handleCopy, changed to generatePDF
             className="flex items-center gap-1 ml-auto text-[10px] font-semibold px-2 py-1 rounded tracking-wide"
-            style={
-              emailed
-                ? { background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.2)' }
-                : { background: 'rgba(29,78,216,0.2)', color: '#93BBFF', border: '1px solid rgba(29,78,216,0.35)' }
-            }
           >
-            {emailed ? <Check className="w-3.5 h-3.5" /> : <Mail className="w-3.5 h-3.5" />}
-            {emailed ? 'Emailed!' : 'Email Note'}
           </button>
               </div>
               

@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Stethoscope, User } from 'lucide-react';
-import type { TranscriptLine, SessionStatus } from '../types';
+import type { TranscriptLine, SessionStatus, Patient } from '../types';
 
 interface TranscriptPanelProps {
   lines: TranscriptLine[];
   status: SessionStatus;
+  patient: Patient;
 }
 
 function formatTime(ms: number) {
@@ -30,9 +31,10 @@ function AudioWaveform({ paused = false, color = '#3B82F6', height = 32 }: { pau
   );
 }
 
-export default function TranscriptPanel({ lines, status }: TranscriptPanelProps) {
+export default function TranscriptPanel({ lines, status, patient }: TranscriptPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const isRecording = status === 'recording';
+  const patientLabel = `Patient(${patient.first_name}, ${patient.last_name})`;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -72,7 +74,7 @@ export default function TranscriptPanel({ lines, status }: TranscriptPanelProps)
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full" style={{ background: '#2E4A66' }} />
-            Patient
+            {patientLabel}
           </span>
           {lines.length > 0 && (
             <span className="font-semibold" style={{ color: '#2E4A66' }}>{lines.length} turns</span>
@@ -121,6 +123,7 @@ export default function TranscriptPanel({ lines, status }: TranscriptPanelProps)
         {/* Transcript lines */}
         {lines.map((line) => {
           const isDoctor = line.speaker === 'Doctor' || line.speaker === 'Speaker 1';
+          const displaySpeaker = line.speaker === 'Patient' ? patientLabel : line.speaker;
           return (
             <div key={line.id} className={`flex gap-3 transcript-enter ${isDoctor ? '' : 'flex-row-reverse'}`}>
               {/* Avatar */}
@@ -145,7 +148,7 @@ export default function TranscriptPanel({ lines, status }: TranscriptPanelProps)
                     className="text-[11px] font-semibold"
                     style={{ color: isDoctor ? '#3B82F6' : '#5A7FA8' }}
                   >
-                    {line.speaker}
+                    {displaySpeaker}
                   </span>
                   <span className="text-[10px]" style={{ color: '#1E3A5A' }}>
                     {formatTime(line.timestamp)}

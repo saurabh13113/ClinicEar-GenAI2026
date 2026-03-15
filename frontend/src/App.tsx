@@ -805,7 +805,7 @@ export default function App({ patient, mode, onEndSession }: AppProps) {
       >
         {/* Left: Transcript */}
         <div className="w-[44%] flex flex-col overflow-hidden">
-          <TranscriptPanel lines={transcript} status={status} />
+          <TranscriptPanel lines={transcript} status={status} patient={patient} />
         </div>
 
         {/* Right: Tab panel + Audit */}
